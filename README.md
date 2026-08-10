@@ -6,18 +6,18 @@ Interactive chaos engineering sandbox for exploring OpenTelemetry observability 
 
 ## Live Demo
 
-Try it now at **[demo.iapm.app](https://demo.iapm.app/)** - no setup required.
+Try it now at **[chaos.deepcube.ai](https://chaos.deepcube.ai/)** - no setup required.
 
 1. Create a sandbox (automatic on first visit)
 2. Click connections to inject failures
 3. Run SQL/Redis/Pipeline scenarios
 4. Watch animated request flows
 
-Want to see traces in 3D? Sign up for a free [Immersive APM](https://www.immersivefusion.com) account.
+Want to see traces in 3D? Sign up for a free [DeepCube (TM)](https://www.immersivefusion.com) account.
 
 ## What Is This?
 
-A zero-config way to experiment with chaos engineering and observability. The [live demo](https://demo.iapm.app/) requires no setup - just visit the URL and start breaking things. Running locally requires .NET, Node.js, SQL Server, and Redis (see [Running Locally](#running-locally)).
+A zero-config way to experiment with chaos engineering and observability. The [live demo](https://chaos.deepcube.ai/) requires no setup - just visit the URL and start breaking things. Running locally requires .NET, Node.js, SQL Server, and Redis (see [Running Locally](#running-locally)).
 
 See exactly how failures propagate through distributed systems and appear in APM tools.
 
@@ -118,21 +118,21 @@ Edit `src/Example.Api/appsettings.json` with your connection strings and OTLP en
     }
   },
   "Otlp": {
-    "Endpoint": "https://otlp.iapm.app",
+    "Endpoint": "https://otlp.deepcube.ai",
     "ApiKey": "your-api-key"
   }
 }
 ```
 
-> To get an API key, sign up for a free [Immersive APM](https://portal.iapm.app) account.
+> To get an API key, sign up for a free [DeepCube](https://portal.deepcube.ai) account.
 
 ## Related Tools
 
-- **[OpenTelemetry Trace Generator](https://github.com/ImmersiveFusion/if-opentelemetry-tracegen)** - Single-binary distributed trace generator with 28 services, 59 pods, and 40 scenario flows (including 12 AI agentic scenarios). Zero infrastructure. Complements this simulator: generate topology-rich traces there, inject chaos here, [visualize both in 3D](https://immersivefusion.com).
+- **[OpenTelemetry Trace Generator](https://github.com/ImmersiveFusion/opentelemetry-tracegen)** - Single-binary distributed trace generator with 28 services, 59 pods, and 40 scenario flows (including 12 AI agentic scenarios). Zero infrastructure. Complements this simulator: generate topology-rich traces there, inject chaos here, [visualize both in 3D](https://immersivefusion.com).
 
 ## Contributing
 
-Contributions welcome - [open an issue](https://github.com/ImmersiveFusion/if-opentelemetry-chaos-simulator-sample/issues) or submit a PR:
+Contributions welcome - [open an issue](https://github.com/ImmersiveFusion/opentelemetry-chaos-sim/issues) or submit a PR:
 
 - Additional chaos scenarios
 - New visualization features
@@ -147,7 +147,7 @@ Contributions welcome - [open an issue](https://github.com/ImmersiveFusion/if-op
 [Twitter/X](https://twitter.com/immersivefusion) |
 [YouTube](https://www.youtube.com/@immersivefusion)
 
-[Try Immersive APM](https://portal.iapm.app) for your own projects.
+[Try DeepCube](https://portal.deepcube.ai) for your own projects.
 
 ## License
 

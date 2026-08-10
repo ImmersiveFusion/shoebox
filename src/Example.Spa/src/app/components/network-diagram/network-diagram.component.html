@@ -392,6 +392,15 @@
         </div>
       </foreignObject>
 
+      <!--
+        SP-074 (IAPM to DeepCube rename): the IAPM Cloud / IAPM Desktop / IAPM Web node labels and
+        tooltips in this diagram are deliberately NOT renamed. The sub-brand names for Web and
+        Desktop are not ruled yet, and the Desktop compound is ontology-banned under both the old
+        and the new base name, so they need a decided replacement rather than a substitution.
+        Renaming only the Cloud node would leave the
+        diagram half-renamed, which is worse than either end state. All three flip together once the
+        sub-brands are ruled. Do not consistency-fix them.
+      -->
       <!-- IAPM Cloud: 45° down-left from OTel, center at (610, 510) -->
       <foreignObject x="540" y="465" width="140" height="90">
         <div xmlns="http://www.w3.org/1999/xhtml" class="node node-iapm-backend"
