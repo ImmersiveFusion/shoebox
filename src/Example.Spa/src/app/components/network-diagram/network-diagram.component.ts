@@ -613,7 +613,7 @@ export class NetworkDiagramComponent implements OnInit, OnChanges, AfterViewInit
   private async animateToImmersiveApm(source: string = 'API'): Promise<void> {
     this.immersiveApmDotProgress = 0;
     this.immersiveApmDotVisible = true;
-    this.addStatusMessage(`Exporting ${source} traces to IAPM`, 'telemetry');
+    this.addStatusMessage(`Exporting ${source} traces to DeepCube`, 'telemetry');
     this.cdr.detectChanges();
 
     const steps = 20;
@@ -626,7 +626,7 @@ export class NetworkDiagramComponent implements OnInit, OnChanges, AfterViewInit
     }
 
     this.setNodeStatus('immersive-apm', 'processing');
-    this.addStatusMessage(`IAPM received ${source} traces`, 'telemetry');
+    this.addStatusMessage(`DeepCube received ${source} traces`, 'telemetry');
     await this.delay(300);
     this.immersiveApmDotVisible = false;
     this.setNodeStatus('immersive-apm', 'idle');
