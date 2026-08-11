@@ -23,7 +23,7 @@
   },
   "AllowedHosts": "*",
   "Otlp": {
-    "Endpoint": "https://otlp.iapm.app",
+    "Endpoint": "https://otlp.deepcube.ai",
     "ApiKey": "your-api-key-here"
   }
 }
@@ -80,6 +80,13 @@ Contains connection strings and launch profiles:
 ```
 
 ## Frontend Configuration
+
+> **SP-074 note (IAPM to DeepCube rename).** The `grid.iapm.app` host in the two snippets below is
+> deliberately NOT flipped to `deepcube.ai`. It has no verified DNS or certificate mapping in the
+> cutover set, unlike `otlp`, `portal`, `azure`, `my`, and `demo` (which becomes `chaos`, not
+> `demo`). Flipping it by pattern would produce a host that does not serve. Same class as
+> `bridge.iapm.app`. Separately, these two snippets are already stale against the real
+> `environment.ts`, which uses `apiUri` and `gitHubUrl` rather than `apiBaseUrl` and `apm.gridUrl`.
 
 ### environment.ts (Production)
 

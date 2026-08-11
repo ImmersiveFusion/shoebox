@@ -57,7 +57,7 @@
 |-----------|---------|
 | SQL Server | Database operations demo |
 | Redis | Caching operations demo |
-| OTLP Collector | Telemetry ingestion (otlp.iapm.app) |
+| OTLP Collector | Telemetry ingestion (otlp.deepcube.ai) |
 | Immersive APM | Telemetry visualization |
 
 ## Build & Runtime
