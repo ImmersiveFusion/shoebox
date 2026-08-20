@@ -70,7 +70,7 @@ if-opentelemetry-chaos-simulator-sample/
 │   └── workflows/                     # CI/CD workflows
 │
 ├── README.md                          # Project documentation
-└── LICENSE                            # MIT License
+└── LICENSE                            # Apache License 2.0
 ```
 
 ## Key Directories

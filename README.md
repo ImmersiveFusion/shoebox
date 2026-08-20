@@ -151,6 +151,6 @@ Contributions welcome - [open an issue](https://github.com/ImmersiveFusion/opent
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 Copyright 2026 [ImmersiveFusion](https://immersivefusion.com)
