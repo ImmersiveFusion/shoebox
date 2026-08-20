@@ -55,8 +55,10 @@ public static class SandboxExtensions
                 .AddSqlClientInstrumentation(options =>
                 {
                     options.RecordException = true;
-                    options.SetDbStatementForText = true;
-                    options.SetDbStatementForStoredProcedure = true;
+                    // db.query.text, db.query.summary and db.stored_procedure.name are
+                    // emitted by default since the SqlClient instrumentation stabilized.
+                    // The SetDbStatementFor* opt-ins were removed because the attributes
+                    // they gated are now standard.
                 })
                 .AddRedisInstrumentation()
                 .AddOtlpExporter(ConfigureExporter)
