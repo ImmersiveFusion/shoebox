@@ -1,3 +1,5 @@
+![An open box holding a small glowing system on a grid, one connection broken and sparking](.img/banner.jpg)
+
 # OpenTelemetry Chaos Simulator
 
 Interactive chaos engineering sandbox for exploring OpenTelemetry observability with failure injection.
