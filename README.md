@@ -1,10 +1,16 @@
 ![An open box holding a small glowing system on a grid, one connection broken and sparking](.img/banner.jpg)
 
-# OpenTelemetry Chaos Simulator
+# Shoebox
 
-Interactive chaos engineering sandbox for exploring OpenTelemetry observability with failure injection.
+**A small system you can break.**
 
-![Chaos Simulator screenshot showing animated request flows and failure injection](.img/screenshot.png)
+An interactive OpenTelemetry sandbox. Click a connection to break it, watch the failure propagate, and see exactly what it looks like in the telemetry. Every visitor gets an isolated sandbox, so your experiments never touch anyone else's.
+
+Nothing to install and no account needed to use it.
+
+Sibling to [Snowglobe](https://github.com/ImmersiveFusion/snowglobe), which generates whole synthetic systems from one binary. **A snowglobe is sealed. In a shoebox you can open it up.**
+
+![Shoebox showing animated request flows and failure injection](.img/screenshot.png)
 
 ## Live Demo
 
@@ -84,19 +90,19 @@ LOGS     -> Structured logging with trace correlation
 ## Running Locally
 
 ### Prerequisites
-- Node.js 20.19, 22.12, or 24+ (required by Angular 21)
-- .NET 9 SDK
+- Node.js 22.22.3+, 24.15+, or 26+ (required by Angular 22)
+- .NET 10 SDK
 - Angular CLI (`npm install -g @angular/cli`)
 - SQL Server (local or Azure)
 - Redis (local or Azure)
 
-### Backend (ASP.NET Core 9) - start first
+### Backend (ASP.NET Core 10) - start first
 ```bash
 cd src/Example.Api
 dotnet run
 ```
 
-### Frontend (Angular 21)
+### Frontend (Angular 22)
 ```bash
 cd src/Example.Spa
 npm install
