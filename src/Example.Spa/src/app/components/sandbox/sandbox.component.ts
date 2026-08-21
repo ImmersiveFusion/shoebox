@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, EventEmitter, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, EventEmitter, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { SandboxService } from '../../services/sandbox.service';
 import { FlowService, SqlScenario, RedisScenario, PipelineScenario } from '../../services/flow.service';
 import { catchError, first, forkJoin, merge, of, switchMap, tap } from 'rxjs';
@@ -11,6 +11,7 @@ import { FlowRequest } from '../network-diagram/network-diagram.component';
     selector: 'app-sandbox',
     templateUrl: './sandbox.component.html',
     styleUrl: './sandbox.component.scss',
+    changeDetection: ChangeDetectionStrategy.Eager,
     standalone: false
 })
 export class SandboxComponent implements OnInit {

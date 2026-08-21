@@ -3,10 +3,11 @@ import { BrowserModule } from '@angular/platform-browser';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { FormsModule } from '@angular/forms';
 import {
-    HTTP_INTERCEPTORS,
-    HttpClient,
-    provideHttpClient,
-    withInterceptorsFromDi
+  HTTP_INTERCEPTORS,
+  HttpClient,
+  provideHttpClient,
+  withInterceptorsFromDi,
+  withXhr
 } from "@angular/common/http";
 
 import { AppRoutingModule } from './app-routing.module';
@@ -39,7 +40,7 @@ import { ScenarioDescriptionPipe } from './pipes/scenario-description.pipe';
         SandboxService,
         FlowService,
         ReplaceLineBreaksPipe,
-        provideHttpClient(withInterceptorsFromDi()),
+        provideHttpClient(withXhr(), withInterceptorsFromDi()),
     ],
     bootstrap: [AppComponent]
 })

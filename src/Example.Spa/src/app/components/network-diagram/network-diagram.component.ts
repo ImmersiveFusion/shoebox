@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, OnInit, Output, OnChanges, ElementRef, ViewChild, AfterViewInit, ChangeDetectorRef } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, Output, OnChanges, ElementRef, ViewChild, AfterViewInit, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { networkDiagramAnimations } from './network-diagram.animations';
 import { SQL_SCENARIOS, REDIS_SCENARIOS, PIPELINE_SCENARIOS, FlowScenario, SqlScenario, RedisScenario, PipelineScenario } from '../../services/flow.service';
 
@@ -52,6 +52,7 @@ const NODE_POSITIONS: { [key: string]: { x: number; y: number } } = {
   templateUrl: './network-diagram.component.html',
   styleUrls: ['./network-diagram.component.scss'],
   animations: networkDiagramAnimations,
+  changeDetection: ChangeDetectionStrategy.Eager,
   standalone: false
 })
 export class NetworkDiagramComponent implements OnInit, OnChanges, AfterViewInit {
