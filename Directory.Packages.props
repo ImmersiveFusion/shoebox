@@ -18,4 +18,16 @@
     <PackageVersion Include="Polly" Version="8.7.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.2.3" />
   </ItemGroup>
+
+  <!-- Test packages. FluentAssertions is pinned to 7.x on purpose: 8.x moved to
+       a file licence (the Xceed community model, free non-commercial and paid
+       for commercial use) while 7.x remains Apache-2.0, which is what this repo
+       ships under. -->
+  <ItemGroup>
+    <PackageVersion Include="FluentAssertions" Version="7.2.2" />
+    <PackageVersion Include="NUnit" Version="4.6.1" />
+    <PackageVersion Include="NUnit3TestAdapter" Version="6.2.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+  </ItemGroup>
 </Project>
