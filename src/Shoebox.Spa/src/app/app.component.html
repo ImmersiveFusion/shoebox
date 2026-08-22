@@ -1,1 +1,52 @@
-<app-shoebox></app-shoebox>
+<div class="chrome" role="banner">
+  <div class="brand">
+    <!-- An open box with a small system inside and one severed link. Same idea as
+         the repo banner: a snowglobe is sealed, a shoebox you can open up. -->
+    <svg class="mark" width="40" height="40" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id="sbTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#5df2e2"/>
+          <stop offset="100%" stop-color="#1c9c92"/>
+        </linearGradient>
+        <filter id="sbGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.2" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- the open box, lid off, near wall cut low -->
+      <g stroke="url(#sbTeal)" fill="none" stroke-width="3" stroke-linejoin="round">
+        <path d="M12 40 L50 22 L88 40 L50 58 Z" opacity="0.45"/>
+        <path d="M12 40 L12 68 L50 86 L88 68 L88 40"/>
+        <path d="M50 58 L50 86" opacity="0.55"/>
+      </g>
+
+      <!-- the small system inside -->
+      <g filter="url(#sbGlow)">
+        <circle cx="34" cy="52" r="3.4" fill="#5df2e2"/>
+        <circle cx="52" cy="45" r="3.4" fill="#5df2e2"/>
+        <circle cx="66" cy="55" r="3.4" fill="#5df2e2"/>
+        <path d="M34 52 L52 45" stroke="#5df2e2" stroke-width="2" opacity="0.8"/>
+        <!-- the severed one, and it is the only magenta in the mark -->
+        <path d="M52 45 L60 50" stroke="#ff2d6f" stroke-width="2"/>
+        <path d="M63 53 L66 55" stroke="#ff2d6f" stroke-width="2"/>
+        <circle cx="61.5" cy="51.5" r="1.6" fill="#ff2d6f"/>
+      </g>
+    </svg>
+
+    <span class="wordmark">
+      <strong>Shoebox</strong>
+      <em>a small system you can break</em>
+    </span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <a class="sibling" href="https://github.com/ImmersiveFusion/snowglobe" target="_blank" rel="noopener">
+    Sibling: Snowglobe
+  </a>
+</div>
+
+<main role="main">
+  <app-shoebox></app-shoebox>
+</main>
