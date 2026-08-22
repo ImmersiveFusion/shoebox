@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using OpenTelemetry;
 
-namespace Example.Api.Sandbox;
+namespace Shoebox.Api.Sandbox;
 
 public class SandboxMiddleware : IMiddleware
 {

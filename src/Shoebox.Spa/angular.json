@@ -3,7 +3,7 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "Example.Spa": {
+    "Shoebox.Spa": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -72,10 +72,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "Example.Spa:build:production"
+              "buildTarget": "Shoebox.Spa:build:production"
             },
             "development": {
-              "buildTarget": "Example.Spa:build:development"
+              "buildTarget": "Shoebox.Spa:build:development"
             }
           },
           "defaultConfiguration": "development"
@@ -83,7 +83,7 @@
         "extract-i18n": {
           "builder": "@angular/build:extract-i18n",
           "options": {
-            "buildTarget": "Example.Spa:build"
+            "buildTarget": "Shoebox.Spa:build"
           }
         },
         "test": {

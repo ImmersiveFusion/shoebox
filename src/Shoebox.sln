@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.8.34330.188
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Example.Api", "Example.Api\Example.Api.csproj", "{044A7095-C043-4C14-82CB-0969963843B6}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Shoebox.Api", "Shoebox.Api\Shoebox.Api.csproj", "{044A7095-C043-4C14-82CB-0969963843B6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

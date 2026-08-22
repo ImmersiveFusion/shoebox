@@ -92,13 +92,13 @@ LOGS     -> Structured logging with trace correlation
 
 ### Backend (ASP.NET Core 9) - start first
 ```bash
-cd src/Example.Api
+cd src/Shoebox.Api
 dotnet run
 ```
 
 ### Frontend (Angular 21)
 ```bash
-cd src/Example.Spa
+cd src/Shoebox.Spa
 npm install
 ng serve -o
 ```
@@ -106,7 +106,7 @@ ng serve -o
 The frontend opens at `http://localhost:4200` and connects to the API at `http://localhost:5168`.
 
 ### Configuration
-Edit `src/Example.Api/appsettings.json` with your connection strings and OTLP endpoint. Each connection string has `Open` (working) and `Closed` (broken) values for chaos toggling:
+Edit `src/Shoebox.Api/appsettings.json` with your connection strings and OTLP endpoint. Each connection string has `Open` (working) and `Closed` (broken) values for chaos toggling:
 ```json
 {
   "ConnectionStrings": {

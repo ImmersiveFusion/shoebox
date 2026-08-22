@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Example.Api.Sandbox;
+namespace Shoebox.Api.Sandbox;
 
 public static class SandboxSources
 {
