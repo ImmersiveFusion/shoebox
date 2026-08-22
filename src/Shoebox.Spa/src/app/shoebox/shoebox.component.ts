@@ -3,6 +3,7 @@ import { Subject, debounceTime } from 'rxjs';
 import { EXAMPLES, DEFAULT_EXAMPLE, Example } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import { URL_LENGTH_WARNING, readDiagramFromUrl, writeDiagramToUrl } from './diagram-url';
+import { decorate } from './diagram-style';
 
 @Component({
   selector: 'app-shoebox',
@@ -44,7 +45,28 @@ export class ShoeboxComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     this.mermaid = (await import('mermaid')).default;
-    this.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+    this.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      // 'base' rather than 'dark', because dark is still mermaid's grey-on-grey and
+      // only themeVariables let the diagram sit in the same world as the rest of
+      // the page. The per-node looks are applied separately, in diagram-style.ts.
+      theme: 'base',
+      themeVariables: {
+        darkMode: true,
+        background: 'transparent',
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+        primaryColor: '#13243a',
+        primaryTextColor: '#e8f1f6',
+        primaryBorderColor: '#2fd4c4',
+        lineColor: '#4d6b83',
+        textColor: '#e8f1f6',
+        // Edge labels carry the "broken: wrong table" text, so they need to be
+        // readable over both the panel and an edge passing underneath.
+        edgeLabelBackground: '#0b1622',
+        tertiaryColor: '#12202f',
+      },
+    });
 
     // A shared link wins over the default, because someone followed it on purpose.
     const fromUrl = await readDiagramFromUrl();
@@ -107,7 +129,7 @@ export class ShoeboxComponent implements OnInit {
   private async render(): Promise<void> {
     try {
       if (!this.mermaid) return;
-      const { svg } = await this.mermaid.render('shoebox-graph', this.diagram);
+      const { svg } = await this.mermaid.render('shoebox-graph', decorate(this.diagram));
       this.renderTarget.nativeElement.innerHTML = svg;
       this.renderError.set(null);
     } catch (error: unknown) {

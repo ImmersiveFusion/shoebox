@@ -38,8 +38,15 @@ a:hover { color: var(--teal-bright); }
 
 // Respect the setting. The glows and lifts here are decoration, and someone who
 // asked the OS to stop moving things should not have to argue with a demo app.
+// The :not(svg) matters and is not defensive noise. A blanket
+// transition-duration override reaches inside the rendered mermaid SVG, and the
+// graph then lays out about forty times too large -- nodes come out the right
+// size but two thousand pixels apart, so the whole diagram scales down to
+// hairlines. Verified by bisection: animation-duration and
+// animation-iteration-count are both harmless, transition-duration alone does
+// it, and excluding the SVG subtree fixes it.
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *:not(svg):not(svg *) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
