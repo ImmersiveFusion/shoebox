@@ -1,19 +1,14 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
-import { SandboxComponent } from './components/sandbox/sandbox.component';
+import { ShoeboxComponent } from './shoebox/shoebox.component';
 
 const routes: Routes = [
-  {
-    path: '',
-    redirectTo: 'sandbox',
-    pathMatch: 'full'
-  },
-  { path: 'sandbox', component: SandboxComponent },
-  { path: 'sandbox/:sandboxId', component: SandboxComponent }
+  { path: '', component: ShoeboxComponent },
+  { path: '**', redirectTo: '' },
 ];
 
 @NgModule({
   imports: [RouterModule.forRoot(routes)],
-  exports: [RouterModule]
+  exports: [RouterModule],
 })
 export class AppRoutingModule { }

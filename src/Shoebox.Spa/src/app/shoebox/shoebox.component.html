@@ -1,0 +1,131 @@
+<div class="shoebox">
+
+  <header class="masthead">
+    <h1>Shoebox</h1>
+    <p class="tagline">A small system you can break.</p>
+    <p class="lede">
+      Paste a Mermaid diagram of a system, break something, and fire one request.
+      Real OpenTelemetry comes out. No account, no install, nothing to deploy.
+    </p>
+  </header>
+
+  <section class="panel examples">
+    <label for="example">Start from an example</label>
+    <select id="example" [ngModel]="selectedExampleId" (ngModelChange)="loadExample($event)">
+      <option value="" disabled>Pick one, or just paste your own</option>
+      <optgroup *ngFor="let group of groups" [label]="group">
+        <option *ngFor="let example of examples"
+                [value]="example.id"
+                [hidden]="example.group !== group">
+          {{ example.label }}
+        </option>
+      </optgroup>
+    </select>
+    <p class="hint" *ngIf="descriptionFor(selectedExampleId) as description">{{ description }}</p>
+  </section>
+
+  <div class="split">
+
+    <section class="panel editor">
+      <label for="diagram">The diagram is the whole state</label>
+      <textarea id="diagram"
+                spellcheck="false"
+                [(ngModel)]="diagram"
+                (ngModelChange)="onDiagramChanged()"
+                rows="16"></textarea>
+
+      <details class="cheatsheet">
+        <summary>What the shapes and labels mean</summary>
+        <table>
+          <tr><td><code>api[Orders API]</code></td><td>a service</td></tr>
+          <tr><td><code>db[(Postgres)]</code></td><td>a datastore</td></tr>
+          <tr><td><code>q[[Job Queue]]</code></td><td>a queue</td></tr>
+          <tr><td><code>cache((Redis))</code></td><td>a cache</td></tr>
+          <tr><td><code>{{ hexagonExample }}</code></td><td>a third party</td></tr>
+          <tr><td><code>[Worker x5]</code></td><td>five replicas, load balanced</td></tr>
+          <tr><td><code>[Worker #2]</code></td><td>one named instance</td></tr>
+          <tr><td><code>--&gt;|broken|</code></td><td>this call always fails</td></tr>
+          <tr><td><code>--&gt;|broken: wrong table|</code></td><td>and this is why</td></tr>
+          <tr><td><code>--&gt;|broken on #3|</code></td><td>only instance 3 fails</td></tr>
+        </table>
+        <p class="note">
+          <strong>Replicas are load balanced. Separate arrows are fan-out.</strong>
+          <code>q --&gt; worker[Worker x5]</code> sends one request to <em>one</em> worker.
+          Two arrows out of one node call <em>both</em>.
+        </p>
+      </details>
+    </section>
+
+    <section class="panel viewer">
+      <div class="render" #render></div>
+      <p class="error" *ngIf="renderError()">
+        Diagram not renderable yet: {{ renderError() }}
+      </p>
+    </section>
+
+  </div>
+
+  <section class="panel controls">
+    <button type="button" class="fire" (click)="fire()">Fire one request</button>
+    <button type="button" class="reset" (click)="resetRuns()">Reset runs</button>
+    <span class="runcount">next run: <strong>{{ runIndex }}</strong></span>
+
+    <span class="otlp" *ngIf="otlp() as status">
+      <ng-container *ngIf="status.configured; else noEndpoint">
+        exporting to <code>{{ status.endpoint }}</code>
+      </ng-container>
+      <ng-template #noEndpoint>
+        <strong>No OTLP endpoint configured.</strong> Runs still execute, nothing is exported.
+        Set <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> to any OTLP backend.
+      </ng-template>
+    </span>
+  </section>
+
+  <section class="panel result" *ngIf="result() as run">
+    <h2>Run {{ run.runIndex }}</h2>
+    <ul class="stats">
+      <li><span>spans</span><strong>{{ run.spanCount }}</strong></li>
+      <li [class.bad]="run.failedSpanCount > 0"><span>failed</span><strong>{{ run.failedSpanCount }}</strong></li>
+      <li><span>trace</span><code>{{ run.traceId || 'none' }}</code></li>
+    </ul>
+    <p class="served">
+      served by: <code *ngFor="let pod of run.servedBy">{{ pod }}</code>
+    </p>
+    <p class="hint" *ngIf="run.failedSpanCount === 0">
+      Nothing failed on this run. If the diagram breaks only one instance, keep firing.
+    </p>
+  </section>
+
+  <section class="panel topology" *ngIf="topology() as parsed">
+    <h2>What Shoebox read</h2>
+    <table class="pods">
+      <tr><th>pod</th><th>service.name</th><th>kind</th><th>replicas</th></tr>
+      <tr *ngFor="let pod of parsed.pods">
+        <td>{{ pod.label }}</td>
+        <td><code>{{ pod.serviceName }}</code></td>
+        <td>{{ pod.kind }}</td>
+        <td>{{ pod.pinnedInstance ? '#' + pod.pinnedInstance : pod.replicas }}</td>
+      </tr>
+    </table>
+    <p class="note" *ngFor="let note of parsed.notes">{{ note }}</p>
+  </section>
+
+  <p class="urlwarning" *ngIf="urlTooLong()">
+    This diagram makes a very long link. It will work here, but may be truncated by
+    mail clients and chat apps.
+  </p>
+
+  <footer>
+    <p>
+      Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
+      onto every span as <code>sandbox.id</code>. That is a live demonstration of baggage
+      propagation, inside a tool for learning to read telemetry.
+    </p>
+    <p>
+      Sibling to <a href="https://github.com/ImmersiveFusion/snowglobe">Snowglobe</a>,
+      which generates whole synthetic systems from one binary.
+      A snowglobe is sealed. In a shoebox you can open it up.
+    </p>
+  </footer>
+
+</div>
