@@ -1,0 +1,6 @@
+{
+  "/sandbox": { "target": "http://localhost:5168", "secure": false },
+  "/topology": { "target": "http://localhost:5168", "secure": false },
+  "/run": { "target": "http://localhost:5168", "secure": false },
+  "/otlp": { "target": "http://localhost:5168", "secure": false }
+}

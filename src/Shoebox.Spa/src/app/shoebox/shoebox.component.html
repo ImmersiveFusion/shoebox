@@ -116,7 +116,7 @@
   </p>
 
   <footer>
-    <p>
+    <p *ngIf="sandboxId">
       Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
       onto every span as <code>sandbox.id</code>. That is a live demonstration of baggage
       propagation, inside a tool for learning to read telemetry.

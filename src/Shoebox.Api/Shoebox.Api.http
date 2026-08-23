@@ -1,6 +1,28 @@
-@Example.Api_HostAddress = http://localhost:5168
+@Shoebox_HostAddress = http://localhost:5168
 
-GET {{Example.Api_HostAddress}}/weatherforecast/
+### Claim a sandbox. Every run is tagged with this id and nothing is persisted.
+POST {{Shoebox_HostAddress}}/sandbox
 Accept: application/json
+
+### Is telemetry going anywhere? Tells an unconfigured endpoint from a broken diagram.
+GET {{Shoebox_HostAddress}}/otlp/status
+Accept: application/json
+
+### Parse a diagram into a topology without emitting anything.
+POST {{Shoebox_HostAddress}}/topology/parse
+Content-Type: application/json
+
+{
+  "diagram": "flowchart LR\n  web[Web]\n  api[[API]]\n  db[(Orders DB)]\n  web --> api\n  api -->|broken: wrong table| db"
+}
+
+### Fire exactly one request through the diagram and emit OTLP.
+POST {{Shoebox_HostAddress}}/run?sandboxId=00000000000000000000000000000000
+Content-Type: application/json
+
+{
+  "diagram": "flowchart LR\n  web[Web]\n  api[[API]]\n  db[(Orders DB)]\n  web --> api\n  api -->|broken: wrong table| db",
+  "runIndex": 1
+}
 
 ###
