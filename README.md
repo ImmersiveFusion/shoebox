@@ -20,7 +20,7 @@ safe to hand to a stranger and cheap to run.
 2. **Break a call.** A label on an edge is all it takes.
 3. **Fire one request.** Nothing moves until you say so. That is the point: you
    fired one request, you know its path, and you know what you broke.
-4. **Start from an example.** Sixteen prebaked scenarios, grouped.
+4. **Start from an example.** Seventeen prebaked scenarios, grouped.
 5. **Share the link.** The diagram travels in the URL, so a link is a runnable
    repro.
 
@@ -62,6 +62,20 @@ publishes normally and its span carries `messaging.destination.name`, and no
 receive ever correlates to it. A backend can tell something ought to be consuming
 that destination; the trace can only show you that nothing did. Put the consumer
 back and the phantom disappears, which is the point.
+
+**Which means a queue needs a far side.** Draw `orders --> q[[Job Queue]]` and stop
+there, and the run publishes to a destination nothing receives — the same telemetry
+a declared phantom produces, span for span, so a backend reports it unconsumed
+without anyone having written the word. A datastore may be the last thing in a
+diagram, because a trace only ever learns about one from its caller. A queue may
+not, because the whole reason to draw a queue is what happens on the other side.
+The run tells you when you have done it.
+
+**The broker comes off the label.** `q[[Kafka]]` publishes with
+`messaging.system = kafka`, and a label naming no broker gets `rabbitmq`. That
+matters more than it looks: a reader keys a queue on (system, destination) and
+often *labels* the node with the system, so a hardcoded one puts every queue in
+your diagram on screen under the same name.
 
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
@@ -195,7 +209,7 @@ curl -X POST "http://localhost:5168/run?sandboxId=$ID" \
 
 ```bash
 npm --prefix src/Shoebox.Spa run build -- --configuration production   # ~434 kB initial, no budget warning
-dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 54 tests
+dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 65 tests
 ```
 
 ## How isolation works
@@ -276,7 +290,7 @@ it on the new build and says it is as good or better.
 One behaviour is unexplained rather than fixed: RabbitMQ has been observed still reading
 as a phantom in DeepCube after the emitter was corrected, and that was never reproduced
 under controlled conditions.
-[`docs/analysis/phantom-detect-e-001-rabbitmq-open.md`](docs/analysis/phantom-detect-e-001-rabbitmq-open.md)
+[`docs/analysis/phantom-detect-e-001-rabbitmq-phantom.md`](docs/analysis/phantom-detect-e-001-rabbitmq-phantom.md)
 has the two things to check first, how the consuming side actually decides, and the dead
 ends already paid for. Read it before touching the phantom path.
 

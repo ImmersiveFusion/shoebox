@@ -1,9 +1,10 @@
-# Open Investigation — RabbitMQ Still Reads as a Phantom in DeepCube
+# Investigation — RabbitMQ Reading as a Phantom in DeepCube
 
 **PS ID:** phantom-detect | **Entry ID:** e-001 | **Criticality:** C2
-**Opened:** 2026-08-23 | **Status:** OPEN — not reproduced under controlled conditions
-**Scope boundary:** This document records an unresolved observation, the procedure that
-would settle it, and the dead ends already paid for. It asserts no root cause.
+**Opened:** 2026-08-23 | **Status:** CAUSE IDENTIFIED 2026-08-23, one fix shipped, one
+behaviour documented rather than changed
+**Scope boundary:** This document records the observation, what it turned out to be, the
+two residue effects that can still fake it, and the dead ends already paid for.
 
 ---
 
@@ -12,20 +13,76 @@ would settle it, and the dead ends already paid for. It asserts no root cause.
 After the emitter fixes of 2026-08-23 shipped, **RabbitMQ still appeared as a phantom
 node** in the DeepCube grid while looking at Shoebox output.
 
-**Read the next paragraph before acting on anything below it.** The graph was never
-observed directly during that session. Every explanation offered for the behaviour was
-inferred from reading source, and seven successive inferences were wrong (§5). Treat the
-reasoning here as a list of things to check, not as a finding. A fresh observation
-outranks all of it.
+The original version of this document listed two suspects and asserted no cause, because
+the graph had never been observed directly and seven successive inferences from reading
+source had been wrong (§6). **Section 2 replaces that with a measured answer**, arrived at
+by printing the telemetry (§7) rather than by reading more code. Sections 3 onward are
+unchanged and remain true.
 
 ---
 
-## 2. Check these two first
+## 2. What it actually was
 
-Both are load-bearing, both are cheap, and either one explains the observation without
-the shipped build being wrong.
+Two independent things, both confirmed by running the emitter and printing every span.
 
-### 2.1 A phantom node never un-phantoms itself
+### 2.1 Every queue node in the grid is labelled after the broker
+
+A messaging dependency node is keyed `{messaging.system}-{destination}`
+(`DependencyKeyResolver.ForMessaging`), and its tags are built system-first —
+`GetDependencyFacilityKeys` parses `messaging.system` and then `messaging.destination`
+into `keyBuilder.Parts`, which becomes `GenericFacilityControl.Tags`, whose setter does
+`ExitPortalLabel.text = _tags[0]`.
+
+**The visible name of every queue node is therefore `messaging.system`, never the
+destination.** And Shoebox hardcoded `messaging.system = "rabbitmq"` for every queue
+regardless of the label on it. A queue called `order.shipped`, or Kafka, still rendered as
+**rabbitmq** — so *any* queue going dark read as "RabbitMQ turned into a phantom".
+
+The same defect had already been found and fixed on the queue's own span (see the comment
+on `SemanticTags`'s `PodKind.Queue` case, which says it "asserted rabbitmq for every queue
+regardless of the label on it"). The fix never reached `MessagingTags`, which is what
+feeds every publish and every receive. **Fixed:** `MessagingSystem(Pod)` now reads the
+broker off the label, registered values only, defaulting to `rabbitmq` when the label
+names none.
+
+### 2.2 A terminal queue is emitted as an unconsumed one
+
+`PublishAndDeliver` emits the PRODUCER span unconditionally and then walks the consumer
+edges. Draw a queue as the last node and there are no consumer edges to walk, so the run
+emits a publish with no receive — which is, span for span, what a declared
+`-->|phantom|` emits. Printed side by side:
+
+```text
+phantom-service   q -->|phantom| pay    →  [Producer] publish orders-created   no consumer
+terminal queue    orders --> q[[...]]   →  [Producer] publish job-queue        no consumer
+```
+
+`state.Phantoms` was only populated on an explicit `call.Phantom`, so **the UI told the
+two apart and the telemetry did not.** HP-3 sees a producer with no consumer at the same
+key and marks the node dark at 60 seconds, without anyone having written the word phantom.
+
+The asymmetry underneath it: `api --> db[(Postgres)]` as a leaf is a healthy dependency
+node, because a trace only ever learns about a datastore from its caller. `api --> q[[X]]`
+as a leaf goes dark, because a queue has a far side and the whole reason to draw one is
+what happens over there.
+
+**Not fixed in the emitter, deliberately.** The publish is honest — the caller really did
+publish — and dropping the span would leave an arrow in the diagram with nothing behind
+it. Emitting it as a CLIENT span to dodge HP-3 would be worse: semconv maps
+`messaging.operation.type = send` to PRODUCER, so that trades a surprise for a
+fabrication, in a tool whose whole claim is that nothing is invented. What was missing was
+the sentence. A run against a terminal queue now says so, and a run whose only consumer
+failed says that instead. Covered by `tests/Shoebox.Api.UnitTests/Run/TerminalQueueTests.cs`,
+which pins the equivalence rather than papering over it.
+
+---
+
+## 3. Two residue effects that can still fake this
+
+Neither was the cause, both are real, and both will waste an hour if you do not know them.
+Check them before believing any future observation of a phantom.
+
+### 3.1 A phantom node never un-phantoms itself
 
 `ServiceDiagnostics.TryDemoteDependencyPhantom(key)` has exactly two call sites, and
 both are arrival handlers:
@@ -39,10 +96,10 @@ anything keyed `rabbitmq` at all, so a phantom minted earlier in a session sits 
 grid indefinitely: unrefreshed, unfalsifiable, and indistinguishable from a live finding.
 
 **Procedure.** Clear the grid or restart the client, fire exactly one run, then wait the
-full promotion threshold (§3). If RabbitMQ returns, it is real. If it does not, the
+full promotion threshold (§4). If RabbitMQ returns, it is real. If it does not, the
 observation was a residue of an earlier build.
 
-### 2.2 The diagram lives in the URL fragment
+### 3.2 The diagram lives in the URL fragment
 
 `readDiagramFromUrl()` (`src/Shoebox.Spa/src/app/shoebox/diagram-url.ts:59`) reads
 `window.location.hash` and wins over the default example
@@ -56,7 +113,7 @@ example.
 
 ---
 
-## 3. What the consuming side actually does
+## 4. What the consuming side actually does
 
 `IF.APM.App.Unity.HDRP/.../Grid/Scenes/Service/Scripts/Phantom/PhantomDetectorControl.cs`,
 read and confirmed 2026-08-23. Two independent rules, keyed differently, with different
@@ -79,7 +136,7 @@ was never created, but that mints under the *destination* key too, never a servi
 (`ScanIntervalSeconds`, `PhantomDetectorControl.cs:38`). Nothing appears immediately, and
 a check made inside the first minute proves nothing.
 
-### 3.1 Two defects in the consumer, neither of them Shoebox's
+### 4.1 Two defects in the consumer, neither of them Shoebox's
 
 1. **`BuildMessagingKey` never reads `messaging.destination.name`.** It reads the
    deprecated `messaging.destination`, falling back to a legacy `message.destination`
@@ -102,7 +159,7 @@ a check made inside the first minute proves nothing.
 
 ---
 
-## 4. The standing conformance gap on our side
+## 5. The standing conformance gap on our side
 
 **`server.port` is deliberately omitted on the phantom path.** The consuming side builds
 a dependency key as host → `db.system` → `db.name` → `server.port`, while phantom
@@ -116,7 +173,7 @@ where it is unambiguous (`TopologyRunner.cs:474`, external third-party calls). D
 
 ---
 
-## 5. Ruled out — do not spend the round again
+## 6. Ruled out — do not spend the round again
 
 Each of these was proposed, implemented or argued during the 2026-08-23 session and is
 wrong. They are recorded because most of them were plausible.
@@ -124,7 +181,7 @@ wrong. They are recorded because most of them were plausible.
 - **`server.address = "{service}.internal"` on internal spans.** An invented hostname
   that nothing ever emits under, which made *every* service in the diagram a phantom.
 - **Emitting `server.port` on the phantom path.** Produces a duplicate node, for the
-  reason in §4.
+  reason in §5.
 - **Modelling a phantom as a direct call.** A synchronous callee that is not there
   refuses the connection; a refused connection is an error span; an error span is
   evidence. Phantoms are the *absence* of evidence, so they exist only behind a queue.
@@ -134,12 +191,12 @@ wrong. They are recorded because most of them were plausible.
 - **Stopping terminal queues from getting producer semantics.** They then fell through to
   being walked as ordinary pods, acquired a `service.name`, and RabbitMQ was published as
   a *service* — worse than the problem it solved.
-- **Trusting a running client's grid state across a rebuild.** See §2.1.
-- **Trusting a browser tab across a diagram change.** See §2.2.
+- **Trusting a running client's grid state across a rebuild.** See §3.1.
+- **Trusting a browser tab across a diagram change.** See §3.2.
 
 ---
 
-## 6. Method note: print the telemetry
+## 7. Method note: print the telemetry
 
 The category error that actually mattered — queues, datastores, caches and third parties
 being emitted as services, each with its own `service.name` — was found in one pass by
@@ -163,7 +220,7 @@ telemetry.**
 
 ---
 
-## 7. Also outstanding in Shoebox
+## 8. Also outstanding in Shoebox
 
 - **Destinations are slugified.** Type `orders.created` and the telemetry says
   `orders-created`: queue labels go through the same service-name slugifier as pods

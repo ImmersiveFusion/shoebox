@@ -41,6 +41,15 @@ Every Shoebox-side defect in this report has shipped a fix, each with a test beh
   they are messaging spans only now.
 - **Not in the original matrix:** Shoebox emitted telemetry about *itself* under a
   resource named `shoebox`, so a four-service diagram published five services. Removed.
+- **Not in the original matrix, found 2026-08-23 by printing the spans:**
+  `messaging.system` was hardcoded to `"rabbitmq"` on every publish and every receive,
+  regardless of the label on the queue, so a queue called Kafka reported as RabbitMQ.
+  `messaging.system` is a Required attribute whose value is a registered enum, which makes
+  this a wrong value on a conformant key rather than a cosmetic one. Now read off the
+  label, registered values only, defaulting to `rabbitmq`. The consequence was larger than
+  the attribute: a reader keys a messaging node on (system, destination) and labels it with
+  the system, so every queue in every diagram rendered under one name — see
+  [`../analysis/phantom-detect-e-001-rabbitmq-phantom.md`](../analysis/phantom-detect-e-001-rabbitmq-phantom.md) §2.1.
 
 ### Recommendation withdrawn: span Links for producer/consumer
 
@@ -65,7 +74,7 @@ the only name the consumer can see. Shoebox dual-emits both spellings as a worka
 **Therefore defect #8 (Snowglobe's bare `messaging.destination`) has a prerequisite.**
 Fix the consumer's key builder to read `messaging.destination.name` *first* before
 renaming anything in Snowglobe, or the rename will silently take the live demo down.
-Full detail in [`../analysis/phantom-detect-e-001-rabbitmq-open.md`](../analysis/phantom-detect-e-001-rabbitmq-open.md) §3.1.
+Full detail in [`../analysis/phantom-detect-e-001-rabbitmq-phantom.md`](../analysis/phantom-detect-e-001-rabbitmq-phantom.md) §3.1.
 
 ### New finding: where the invalid `publish` enum value came from
 

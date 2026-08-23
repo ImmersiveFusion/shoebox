@@ -295,6 +295,9 @@ public sealed class TopologyRunner
             foreach (var (k, v) in MessagingTags(queue, "publish", "send", messageId)) publish.SetTag(k, v);
         }
 
+        var received = false;
+        var declaredPhantom = false;
+
         foreach (var call in consumers)
         {
             var consumer = graph.ById(call.ToId);
@@ -309,12 +312,36 @@ public sealed class TopologyRunner
 
             if (call.Phantom)
             {
+                declaredPhantom = true;
                 state.Phantoms.Add(consumer.ServiceName);
                 continue;
             }
 
+            received = true;
             state.Hop(queue.Id, consumer.Id, failed: false, ms: consumer.DefaultLatencyMs);
             Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
+        }
+
+        // A publish with no receive is the signature of a phantom, and it is not
+        // only produced by declaring one. Draw a queue as the last node and this
+        // loop has nothing to walk, so the run emits exactly what the phantom
+        // example emits: same span, same destination, no consumer. A backend
+        // cannot tell the two apart, and it does not try — it reports the
+        // destination as unconsumed once it stops waiting.
+        //
+        // That is an asymmetry worth saying out loud rather than fixing in the
+        // emitter. A datastore is allowed to be the last thing in a diagram,
+        // because a trace only ever learns about one from its caller. A queue is
+        // not, because a queue has a far side and the whole reason to draw one is
+        // what happens over there. The publish itself is honest and stays: the
+        // caller really did publish, and dropping the span would leave an arrow
+        // with nothing behind it. What was missing is the sentence explaining
+        // what the diagram just claimed.
+        if (!received && !declaredPhantom)
+        {
+            state.Note(consumers.Count == 0
+                ? $"Nothing is drawn consuming {queue.Label}. The publish still happens and still names the destination, so anything reading the telemetry reports it as unconsumed. Draw a consumer, or say {queue.Id} -->|phantom| svc if a consumer that never runs is what you mean."
+                : $"Every consumer of {queue.Label} failed this run, so the publish has no receive. Until one succeeds, the destination reads as unconsumed to anything inferring topology from the messaging spans.");
         }
     }
 
@@ -326,7 +353,7 @@ public sealed class TopologyRunner
     private static IEnumerable<KeyValuePair<string, object?>> MessagingTags(
         Pod queue, string operationName, string operationType, string messageId)
     {
-        yield return new("messaging.system", "rabbitmq");
+        yield return new("messaging.system", MessagingSystem(queue));
         yield return new("messaging.destination.name", queue.ServiceName);
 
         // Deprecated since semconv 1.17, emitted anyway and deliberately.
@@ -352,6 +379,37 @@ public sealed class TopologyRunner
         // the message level, which is the correlation the spec actually defines.
         // Deterministic, because a shared link has to replay identically.
         yield return new("messaging.message.id", messageId);
+    }
+
+    /// <summary>
+    /// The broker, read off the label instead of asserted.
+    ///
+    /// This was hardcoded to rabbitmq for every queue, so a queue somebody called
+    /// Kafka published as RabbitMQ. It is not only a wrong attribute: a reader
+    /// keys a messaging dependency on (system, destination) and labels the node
+    /// with the system, so every queue in a diagram rendered under the same name,
+    /// and a queue going dark read as "RabbitMQ went phantom" whatever it was
+    /// called.
+    ///
+    /// Registered values only, and rabbitmq when the label does not name one. A
+    /// queue nobody named has to be something, and inventing a system name is the
+    /// same fabrication as inventing an attribute.
+    /// </summary>
+    private static string MessagingSystem(Pod queue)
+    {
+        var label = queue.Label.ToLowerInvariant();
+
+        if (label.Contains("kafka")) return "kafka";
+        if (label.Contains("sqs")) return "aws_sqs";
+        if (label.Contains("servicebus") || label.Contains("service bus")) return "servicebus";
+        if (label.Contains("eventhub") || label.Contains("event hub")) return "eventhubs";
+        if (label.Contains("eventgrid") || label.Contains("event grid")) return "eventgrid";
+        if (label.Contains("pubsub") || label.Contains("pub/sub")) return "gcp_pubsub";
+        if (label.Contains("activemq")) return "activemq";
+        if (label.Contains("rocketmq")) return "rocketmq";
+        if (label.Contains("pulsar")) return "pulsar";
+
+        return "rabbitmq";
     }
 
     /// <summary>
