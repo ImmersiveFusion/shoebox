@@ -111,6 +111,58 @@ That diagram *should* produce an unconsumed destination. That is the feature wor
 Check the address bar before concluding anything; a fresh tab on `/` loads the current
 example.
 
+### 3.3 No dependency node exists on the first fire
+
+**A queue never appears on the first run of a diagram**, and neither does a datastore, a
+cache or a third party. This is why the rabbit shows up on the second play.
+
+`AddTrace` (`ServiceDiagnosticsManagerControl.cs:1222`) creates dependency facilities only
+inside the branch that got a service facility:
+
+```csharp
+if (TryGetOrAddServiceFacility(message, out var facility))   // false for 3s after first sight
+{
+    ...
+    TryGetOrAddDependencyFacility(message, facility, out var dependencyFacilities);
+}
+else
+{
+    AccumulateWarmingConnections(facilityKey, message);       // records connections, creates nothing
+}
+```
+
+A service key seen for the first time enters a **3-second warming period**
+(`WarmingPeriodSeconds = 3f`, `:70`) so its position can be chosen from who it talks to,
+and `TryGetOrAddServiceFacility` returns false for the whole of it (`:575`, `:589`). A
+Shoebox run finishes in milliseconds, so on the first fire *every* service in the diagram
+is inside its window, no service facility exists, and the dependency branch never runs.
+`BatchGraduateReadyEntries` later creates the **service** nodes from the accumulated tag
+parts, but it does not replay dependency keys, and `AccumulateWarmingConnections` records
+connections only for centroid placement. So the services arrive on their own and the things
+they depend on do not.
+
+Fire again once the services have graduated and the producer span takes the first branch,
+so the queue node is created. **It is a timer, not a counter:** two fires inside three
+seconds still produce nothing, and one fire, a four-second wait, then a second fire
+produces the node.
+
+Worth holding next to HP-3, because the two clocks are independent and start at different
+moments:
+
+| When | What happens |
+|---|---|
+| First fire, T+0 | `IndexProducer` records the destination and the 60s promotion clock starts — `SpanObserved` is not gated on warming. The node does not exist yet. |
+| Second fire, T+n | The queue node is created, healthy, by the ordinary dependency path. |
+| T+60 | The scan marks that node dark; or, if there was never a second fire, `PromoteStaleProducers` mints it directly as a phantom through its fallback. |
+
+So for an unconsumed queue the observed sequence is: nothing on the first play, the node
+arrives on the second, and it goes dark about a minute after the *first* one rather than
+the most recent. `IndexProducer` deliberately does not reset the clock on repeated
+producers (`PhantomDetectorControl.cs:149`), so firing repeatedly does not hold it off.
+
+**Falsifiable:** if a Postgres or Redis node ever appears on a first fire, this explanation
+is wrong.
+
 ---
 
 ## 4. What the consuming side actually does
