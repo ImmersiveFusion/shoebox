@@ -79,7 +79,9 @@ Nothing else. No SQL Server, no Redis, no containers.
 ### Two processes
 
 ```bash
-# API on 5168
+# API on 5168. Drop OTEL_EXPORTER_OTLP_ENDPOINT and runs still execute,
+# they just do not go anywhere, and the UI says so.
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5168 \
   dotnet run --project src/Shoebox.Api --no-launch-profile
 
