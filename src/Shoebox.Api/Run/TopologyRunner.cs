@@ -330,10 +330,20 @@ public sealed class TopologyRunner
         state.SpanCount++;
 
         activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        // server.address and nothing that would extend the key past it.
+        //
+        // A consumer of this builds its dependency node from the host and then
+        // appends further levels, server.port among them, while phantom detection
+        // keys on the host alone. Emitting a port produced two different keys for
+        // the same peer: the dependency node under host-port, the phantom under
+        // host, so instead of the drawn node being promoted a second one appeared
+        // beside it.
+        //
+        // The spec calls server.port required on client spans and it is a real
+        // omission. It cannot go back until the two keys are derived the same way,
+        // which is a fix on the consuming side, not here.
         activity.SetTag("http.request.method", "POST");
         activity.SetTag("server.address", to.ServiceName);
-        activity.SetTag("server.port", 8080);
-        activity.SetTag("url.full", $"http://{to.ServiceName}:8080/{to.ServiceName}");
     }
 
     /// <summary>
