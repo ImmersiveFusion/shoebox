@@ -171,9 +171,17 @@ button.chip {
   // its background-image on the selected chip, while .on's background shorthand
   // still reset the colour to transparent. The result was near-black label text
   // on the dark panel, which is unreadable.
+  // Green, and not the house teal. Teal is what Shoebox uses for its own
+  // furniture, so a teal hatch says "this is one of ours" rather than "this one
+  // comes back clean". The chips run their own three-colour system against the
+  // diagram's: green, amber, red, which is the one everybody already reads.
   &.wont-fail {
+    border-color: rgba(74, 222, 128, 0.4);
+    background-color: rgba(74, 222, 128, 0.05);
     background-image:
-      repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.34) 0 1px, transparent 1px 7px);
+      repeating-linear-gradient(0deg, rgba(74, 222, 128, 0.4) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #86efac; border-color: rgba(74, 222, 128, 0.9); }
   }
 
   // Selected wins outright. The solid fill already says which one is loaded, and
