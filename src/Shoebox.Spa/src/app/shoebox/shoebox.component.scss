@@ -29,7 +29,13 @@
 // The bottom of the box. Everything rests on this, and the walls cast onto it.
 .box-floor {
   border-radius: 6px;
-  padding: 2rem 1.5rem 3rem;
+  // Symmetric. The 3rem here was leaving room for a footer that has since moved
+  // out of the box, and it was stacking with the last panel's own margin, so the
+  // floor ran on for about 64px after the last thing sitting on it.
+  padding: 2rem 1.5rem;
+
+  // Nothing sitting on the floor pushes past the last one.
+  > :last-child { margin-bottom: 0; }
   background: linear-gradient(180deg, #0a1521, #070f18);
   box-shadow:
     0 28px 42px -28px rgba(0, 0, 0, 0.9) inset,
