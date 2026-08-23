@@ -218,12 +218,13 @@ button.chip {
 // Layer order is paint order, first on top, so the glow sits over the grid and
 // the grid over the panel fill. The 32px pitch is arbitrary but matched to the
 // node heights, which stops the boxes looking like they float between rules.
+$graph-paper:
+  radial-gradient(520px 240px at 50% 0%, rgba(47, 212, 196, 0.10), transparent 70%),
+  repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
+  repeating-linear-gradient(90deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px);
+
 .viewer {
-  background:
-    radial-gradient(520px 240px at 50% 0%, rgba(47, 212, 196, 0.10), transparent 70%),
-    repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
-    repeating-linear-gradient(90deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
-    linear-gradient(180deg, rgba(18, 32, 47, 0.92), rgba(11, 22, 34, 0.92));
+  background: $graph-paper, linear-gradient(180deg, rgba(18, 32, 47, 0.92), rgba(11, 22, 34, 0.92));
 }
 
 .viewer .render {
@@ -295,11 +296,30 @@ button.chip {
   label { margin-bottom: 0.5rem; }
 }
 
+.headactions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+
+// Smaller than the one anchoring the control row: this one is sitting in a
+// heading, not holding down the page.
+button.transport.in-head {
+  width: 34px;
+  height: 34px;
+
+  svg { width: 15px; height: 15px; }
+}
+
+// Next to a filled teal circle, a border at --line reads as no border at all,
+// so the pair looked like one button and one piece of text. Same outline weight
+// as the play control it now sits beside.
 button.expand {
   flex: none;
   background: transparent;
   color: var(--muted);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(143, 168, 186, 0.45);
   border-radius: 6px;
   padding: 0.25rem 0.6rem;
   font-size: 0.7rem;
@@ -326,6 +346,12 @@ button.expand {
 
   .panelhead { flex: none; }
   .cheatsheet { flex: none; }
+
+  // Full screen was flattening the paper. .panel.is-expanded sets a flat navy
+  // background and weighs two classes against .viewer's one, so it won and took
+  // the grid with it. Restated at equal weight, later in the file, over an opaque
+  // base since there is no page showing through any more.
+  &.viewer { background: $graph-paper, linear-gradient(180deg, var(--navy), var(--navy)); }
 
   // min-height: 0, or the flex child refuses to shrink below its content and the
   // panel overflows the viewport instead of the content fitting inside it.

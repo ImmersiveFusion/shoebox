@@ -36,11 +36,21 @@
       <section class="panel editor" #editorPanel [class.is-expanded]="expanded() === 'editor'">
         <div class="panelhead">
           <label for="diagram">The diagram is the whole state</label>
-          <button type="button" class="expand"
-                  (click)="toggleExpand('editor', editorPanel)"
-                  [attr.aria-pressed]="expanded() === 'editor'">
-            {{ expanded() === 'editor' ? 'Exit full screen' : 'Full screen' }}
-          </button>
+          <span class="headactions">
+            <!-- The control row is off screen in full screen, and full screen is
+                 exactly where somebody wants to fire one. -->
+            <button type="button" class="transport play in-head"
+                    *ngIf="expanded() === 'editor'"
+                    (click)="fire()"
+                    title="Fire one request" aria-label="Fire one request">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <button type="button" class="expand"
+                    (click)="toggleExpand('editor', editorPanel)"
+                    [attr.aria-pressed]="expanded() === 'editor'">
+              {{ expanded() === 'editor' ? 'Exit full screen' : 'Full screen' }}
+            </button>
+          </span>
         </div>
         <textarea id="diagram"
                   spellcheck="false"
@@ -73,11 +83,21 @@
       <section class="panel viewer" #viewerPanel [class.is-expanded]="expanded() === 'viewer'">
         <div class="panelhead">
           <label>What it looks like</label>
-          <button type="button" class="expand"
-                  (click)="toggleExpand('viewer', viewerPanel)"
-                  [attr.aria-pressed]="expanded() === 'viewer'">
-            {{ expanded() === 'viewer' ? 'Exit full screen' : 'Full screen' }}
-          </button>
+          <span class="headactions">
+            <!-- The control row is off screen in full screen, and full screen is
+                 exactly where somebody wants to fire one. -->
+            <button type="button" class="transport play in-head"
+                    *ngIf="expanded() === 'viewer'"
+                    (click)="fire()"
+                    title="Fire one request" aria-label="Fire one request">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <button type="button" class="expand"
+                    (click)="toggleExpand('viewer', viewerPanel)"
+                    [attr.aria-pressed]="expanded() === 'viewer'">
+              {{ expanded() === 'viewer' ? 'Exit full screen' : 'Full screen' }}
+            </button>
+          </span>
         </div>
         <div class="render" #render></div>
         <p class="error" *ngIf="renderError()">

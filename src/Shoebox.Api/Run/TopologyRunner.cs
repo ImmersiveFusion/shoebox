@@ -5,13 +5,25 @@ using OpenTelemetry;
 
 namespace Shoebox.Api.Run;
 
+/// <summary>
+/// One edge the request crossed, in the order it crossed it.
+///
+/// The client replays these to fly a dot along the diagram. It has to come from
+/// here rather than be worked out in the browser: the server picks which replica
+/// serves the run and decides which calls fail, so anything the client derived
+/// could show a path the run did not take. In a tool for learning to read
+/// telemetry that is not a rounding error, it is a lie.
+/// </summary>
+public sealed record Hop(string From, string To, bool Failed, int Ms);
+
 public sealed record RunResult(
     int RunIndex,
     string? TraceId,
     IReadOnlyList<string> ServedBy,
     int SpanCount,
     int FailedSpanCount,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<Hop> Hops);
 
 /// <summary>
 /// Fires exactly one request through the graph and emits the spans it produces.
@@ -32,7 +44,8 @@ public sealed class TopologyRunner
         if (entry is null)
         {
             return new RunResult(runIndex, null, Array.Empty<string>(), 0, 0,
-                new[] { "no entry point: every pod is called by something, so there is nowhere to start" });
+                new[] { "no entry point: every pod is called by something, so there is nowhere to start" },
+                Array.Empty<Hop>());
         }
 
         if (!string.IsNullOrWhiteSpace(sandboxId))
@@ -52,7 +65,8 @@ public sealed class TopologyRunner
             state.ServedBy,
             state.SpanCount,
             state.FailedSpanCount,
-            graph.Notes);
+            graph.Notes,
+            state.Hops);
     }
 
     private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0)
@@ -68,10 +82,18 @@ public sealed class TopologyRunner
         var instance = SelectInstance(pod, state.RunIndex);
         var source = _pool.For(pod.ServiceName, instance);
 
+        // Times come from the model, not from how long this loop took to run. A
+        // walk of six pods finishes in microseconds, which exports a trace where
+        // every span is a hairline and nothing can be read off it. Pod.Kind
+        // already carries a plausible latency; this is what spends it.
+        var start = state.Clock;
         using var activity = source.StartActivity(
             SpanName(pod),
             pod.Kind == PodKind.Service && parent is null ? ActivityKind.Server : ActivityKind.Client,
-            parent?.Context ?? default);
+            parent?.Context ?? default,
+            startTime: start);
+
+        state.Clock = state.Clock.AddMilliseconds(pod.DefaultLatencyMs);
 
         if (activity is not null)
         {
@@ -91,13 +113,24 @@ public sealed class TopologyRunner
 
             if (call.FailsFor(instance))
             {
+                state.Hop(pod.Id, target.Id, failed: true, ms: FailureMs);
                 EmitFailedCall(pod, target, call, activity, state, instance);
                 continue;
             }
 
+            state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             Visit(graph, target, activity, state, depth + 1);
         }
+
+        activity?.SetEndTime(state.Clock.UtcDateTime);
     }
+
+    /// <summary>
+    /// A refused call comes back fast. That is the tell, and it is worth showing:
+    /// the failing hop is usually the shortest bar in the waterfall, not the
+    /// longest, which is the opposite of what people expect to look for.
+    /// </summary>
+    private const int FailureMs = 2;
 
     private void EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
     {
@@ -108,6 +141,9 @@ public sealed class TopologyRunner
             parent?.Context ?? default);
 
         if (activity is null) return;
+
+        state.Clock = state.Clock.AddMilliseconds(FailureMs);
+        activity.SetEndTime(state.Clock.UtcDateTime);
 
         state.SpanCount++;
         state.FailedSpanCount++;
@@ -179,6 +215,13 @@ public sealed class TopologyRunner
     private sealed class RunState(int runIndex)
     {
         public int RunIndex { get; } = runIndex;
+
+        /// <summary>Modelled time, not wall clock. Advanced by each pod's latency.</summary>
+        public DateTimeOffset Clock { get; set; } = DateTimeOffset.UtcNow;
+
+        public List<Hop> Hops { get; } = new();
+        public void Hop(string from, string to, bool failed, int ms) =>
+            Hops.Add(new Hop(from, to, failed, ms));
         public string? RootTraceId { get; set; }
         public List<string> ServedBy { get; } = new();
         public int SpanCount { get; set; }
