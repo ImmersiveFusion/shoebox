@@ -141,6 +141,31 @@ button.chip {
     max-height: 100%;
     display: block;
   }
+
+  // Every edge marches toward its target, always. Mermaid draws each path from
+  // source to target, so a negative dashoffset runs the right way on its own and
+  // no per-edge direction has to be worked out. Carried over from the old chaos
+  // sandbox, which did the same thing with hand-placed lines.
+  //
+  // Broken edges keep the dasharray linkStyle gives them, since an inline style
+  // beats this, and they march in magenta. That is deliberate: a dead call that
+  // is still visibly being attempted reads worse than a static one, which is
+  // what it should read as.
+  ::ng-deep svg .flowchart-link {
+    stroke-dasharray: 5 5;
+    animation: shoebox-traffic 1s linear infinite;
+  }
+}
+
+@keyframes shoebox-traffic {
+  to { stroke-dashoffset: -10; }
+}
+
+// The global reduced-motion rule deliberately excludes the SVG subtree, because
+// reaching inside it with transition-duration wrecks mermaid's layout. So the
+// opt-out has to be stated here instead, and only animation is touched.
+@media (prefers-reduced-motion: reduce) {
+  .viewer .render ::ng-deep svg .flowchart-link { animation: none; }
 }
 
 .panelhead {
