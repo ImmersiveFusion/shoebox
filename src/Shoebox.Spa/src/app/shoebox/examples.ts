@@ -37,56 +37,67 @@ const WORKER = (rabbitLabel: string) => `flowchart LR
   worker --> api[Inventory API]
   worker ${rabbitLabel} rabbit[[RabbitMQ]]`;
 
+/**
+ * One axis: the kind of system the example is about.
+ *
+ * The previous grouping was SQL, Redis, Saga, Worker, which is two vendors, a
+ * flow pattern and a role. Four different axes, so nothing new had an obvious
+ * home and none of the four words told a student anything.
+ *
+ * Order here is the order they render, and adding a group is a line in this list.
+ */
+export const GROUPS = ['Databases', 'Workflows', 'Distributed systems'] as const;
+
 export const EXAMPLES: readonly Example[] = [
   // --- SQL: one picture, five outcomes -------------------------------------
-  { id: 'sql-success', group: 'SQL', label: 'Roundtrip',
+  { id: 'sql-success', group: 'Databases', label: 'Datastore roundtrip',
     description: 'Normal query execution, full roundtrip', diagram: SQL('') },
-  { id: 'sql-wrong-table', group: 'SQL', label: 'Wrong Table',
+  { id: 'sql-wrong-table', group: 'Databases', label: 'Wrong table',
     description: 'Query references a non-existent table',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: wrong table| db[(SQL Server)]` },
-  { id: 'sql-wrong-column', group: 'SQL', label: 'Wrong Column',
+  { id: 'sql-wrong-column', group: 'Databases', label: 'Wrong column',
     description: 'Query references a non-existent column',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: wrong column| db[(SQL Server)]` },
-  { id: 'sql-syntax-error', group: 'SQL', label: 'Syntax Error',
+  { id: 'sql-syntax-error', group: 'Databases', label: 'Syntax error',
     description: 'Malformed SQL syntax',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: syntax error| db[(SQL Server)]` },
-  { id: 'sql-division-error', group: 'SQL', label: 'Division Error',
+  { id: 'sql-division-error', group: 'Databases', label: 'Division by zero',
     description: 'Division by zero error',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: division by zero| db[(SQL Server)]` },
 
   // --- Redis ----------------------------------------------------------------
-  { id: 'redis-success', group: 'Redis', label: 'Roundtrip',
+  { id: 'redis-success', group: 'Databases', label: 'Cache roundtrip',
     description: 'Normal cache operation, full roundtrip', diagram: REDIS('') },
-  { id: 'redis-missing-key', group: 'Redis', label: 'Missing Key',
+  { id: 'redis-missing-key', group: 'Databases', label: 'Cache miss',
     description: 'Get a non-existent key, returns null', diagram: REDIS('') },
-  { id: 'redis-large-value', group: 'Redis', label: 'Large Value',
+  { id: 'redis-large-value', group: 'Databases', label: 'Large payload',
     description: 'Store a 10KB payload', diagram: REDIS('') },
-  { id: 'redis-expired-key', group: 'Redis', label: 'Expired Key',
+  { id: 'redis-expired-key', group: 'Databases', label: 'Expired key',
     description: 'Key expires immediately', diagram: REDIS('') },
-  { id: 'redis-serialization-error', group: 'Redis', label: 'Serialization Error',
+  { id: 'redis-serialization-error', group: 'Databases', label: 'Corrupt value',
     description: 'Corrupt data triggers an error',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: serialization error| cache((Redis))` },
-  { id: 'redis-invalid-operation', group: 'Redis', label: 'Invalid Operation',
+  { id: 'redis-invalid-operation', group: 'Databases', label: 'Wrong type',
     description: 'Wrong data type operation',
     diagram: `flowchart LR\n  api[Orders API] -->|broken: invalid operation| cache((Redis))` },
 
   // --- Saga -----------------------------------------------------------------
-  { id: 'simple-saga', group: 'Saga', label: 'Simple Saga',
+  { id: 'simple-saga', group: 'Workflows', label: 'Chain of services',
     description: '4 microservices, 1 instance each, 4 spans', diagram: SAGA('') },
-  { id: 'multi-replica-saga', group: 'Saga', label: 'Multi-Replica Saga',
-    description: '4 microservices, 2 replicas each', diagram: SAGA(' x2') },
+  { id: 'multi-replica-saga', group: 'Distributed systems', label: 'Two of every service',
+    description: 'Every service runs twice. Fire repeatedly and watch which copy answers', diagram: SAGA(' x2') },
 
   // --- Worker permutation ---------------------------------------------------
   // The inherited thirteen never run a replica pool against more than one
   // downstream, which is the shape the replica mechanics exist for.
-  { id: 'worker-happy', group: 'Worker', label: 'Fan-out, healthy',
-    description: 'One request, one worker instance, two downstream calls that both succeed',
+  { id: 'worker-happy', group: 'Workflows', label: 'Work queue',
+    description: 'A job goes on a queue, one of five workers picks it up, and calls on from there',
     diagram: WORKER('-->') },
-  { id: 'worker-broken', group: 'Worker', label: 'Fan-out, publish fails',
+  { id: 'worker-broken', group: 'Workflows', label: 'Work queue, publish fails',
     description: 'Every worker reaches the API and none can publish. The diff is one label',
     diagram: WORKER('-->|broken: connection refused|') },
-  { id: 'worker-broken-one', group: 'Worker', label: 'Fan-out, one bad instance',
-    description: 'Four runs look perfect and the fifth fails. Fire it five times',
+  { id: 'worker-broken-one', group: 'Distributed systems', label: 'Fails one run in five',
+    description: 'Five workers, one of them broken. Four runs look perfect and the fifth does not',
     diagram: WORKER('-->|broken on #3: connection refused|') },
 ];
 

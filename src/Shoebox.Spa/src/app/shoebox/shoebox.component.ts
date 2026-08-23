@@ -1,6 +1,6 @@
 import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal } from '@angular/core';
 import { Subject, debounceTime } from 'rxjs';
-import { EXAMPLES, DEFAULT_EXAMPLE, Example } from './examples';
+import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import { URL_LENGTH_WARNING, readDiagramFromUrl, writeDiagramToUrl } from './diagram-url';
 import { decorate } from './diagram-style';
@@ -21,7 +21,10 @@ export class ShoeboxComponent implements OnInit {
   readonly hexagonExample = 'ext' + '{{' + 'Stripe' + '}}';
 
   readonly examples = EXAMPLES;
-  readonly groups = [...new Set(EXAMPLES.map(e => e.group))];
+
+  // From the list, not from whatever order the array happens to be in, so the
+  // rows read never, always, sometimes rather than however the file was edited.
+  readonly groups = GROUPS.filter(g => EXAMPLES.some(e => e.group === g));
 
   diagram = DEFAULT_EXAMPLE.diagram;
   selectedExampleId = DEFAULT_EXAMPLE.id;
