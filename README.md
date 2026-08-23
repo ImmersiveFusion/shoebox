@@ -66,6 +66,11 @@ back and the phantom disappears, which is the point.
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
 
+**Labels become telemetry names, and are slugified on the way.** A queue label goes
+through the same slugifier as a service name, so `q[[orders.created]]` publishes to a
+destination called `orders-created`. Worth knowing before you paste a real destination in
+and go looking for it in your backend.
+
 Each simulated pod gets its own `TracerProvider` with a Resource carrying
 `service.name`, and its own `ActivitySource`. That is the same pattern
 [Snowglobe](https://github.com/ImmersiveFusion/snowglobe) runs at 28 services and
@@ -190,7 +195,7 @@ curl -X POST "http://localhost:5168/run?sandboxId=$ID" \
 
 ```bash
 npm --prefix src/Shoebox.Spa run build -- --configuration production   # ~434 kB initial, no budget warning
-dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 41 tests
+dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 54 tests
 ```
 
 ## How isolation works
@@ -206,7 +211,7 @@ sustainable.
 
 ## For contributors
 
-Four things in here will cost you an afternoon if nobody tells you.
+Six things in here will cost you an afternoon if nobody tells you.
 
 **Never apply `transition-duration` to `*`.** A `prefers-reduced-motion` block
 doing that reaches inside the rendered SVG, and Mermaid then lays the graph out
@@ -231,6 +236,24 @@ the broken edge stops being the loudest thing on screen.
 blows the 500 kB budget when bundled. The distribution model is somebody clicking
 a link in a forum thread, so the page paints first and the renderer arrives after.
 
+**A run must not inherit ASP.NET's `Activity`.** ASP.NET leaves an unsampled `Activity`
+on the request, and a parent-based sampler then drops every simulated span beneath it:
+runs come back with zero spans while the hops and the notes look perfectly fine, which
+reads like an exporter problem and is not one. `TopologyRunner` detaches from
+`Activity.Current` before a run and restores it after. Do not simplify that away.
+
+**A running instance locks the build output.** Any `Shoebox.Api` you left running holds
+`src/Shoebox.Api/bin/`, and `dotnet build` or `dotnet test` then fails with MSB3027 rather
+than with anything about your change. `dotnet msbuild -t:Compile` type-checks without
+touching `bin/`; for anything that has to actually run, copy the project to a scratch
+directory outside the tree.
+
+Which leads to the rule worth more than the other five: **if the claim is about what the
+telemetry contains, print the telemetry.** A session once went seven rounds reading code
+for a defect that one pass of printing every emitted `service.name` found immediately.
+`tests/Shoebox.Api.UnitTests/Run/QueueShapeDumpTests.cs` is where that lives now — extend
+it before reaching for a throwaway harness.
+
 Adding an example must never require code. `examples.ts` is pure data. If a new
 scenario needs a code change, the design has gone wrong.
 
@@ -249,6 +272,13 @@ Development. Running it locally is still the only way to use it today.
 `chaos.deepcube.ai` is serving the previous version of this project, the one that
 needed SQL Server and Redis. It stays up until whoever gives the demo for real runs
 it on the new build and says it is as good or better.
+
+One behaviour is unexplained rather than fixed: RabbitMQ has been observed still reading
+as a phantom in DeepCube after the emitter was corrected, and that was never reproduced
+under controlled conditions.
+[`docs/analysis/phantom-detect-e-001-rabbitmq-open.md`](docs/analysis/phantom-detect-e-001-rabbitmq-open.md)
+has the two things to check first, how the consuming side actually decides, and the dead
+ends already paid for. Read it before touching the phantom path.
 
 ## The family
 

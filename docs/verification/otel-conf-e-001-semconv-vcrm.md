@@ -11,8 +11,78 @@ Not for use in mission-critical decisions without SME validation.
 > **Entry:** e-001
 > **Criticality:** C3
 > **Date:** 2026-08-23
-> **Status:** Draft — FAIL, remediation required
+> **Status:** FAIL — Shoebox's half remediated 2026-08-23, Snowglobe's half outstanding. See the addendum below.
 > **NASA Processes:** NPR 7123.1D Process 7 (Product Verification)
+
+---
+
+## Remediation Status (addendum, 2026-08-23)
+
+*Added after the verification was written. The matrix below is unchanged and remains the
+record of what was found; this section records what has since been acted on, one
+withdrawn recommendation, and one finding the original pass did not have.*
+
+### Shoebox: closed
+
+Every Shoebox-side defect in this report has shipped a fix, each with a test behind it.
+
+- **#5, `messaging.operation.type = "publish"`.** Now `"send"` on the producer side,
+  with `messaging.operation.name = "publish"` retained
+  (`TopologyRunner.cs:295`, `MessagingTags` at `:326`). This was the single defect most
+  likely to be blocking producer/consumer pairing.
+- **#11, `http.route` on Client-kind spans.** Now SERVER-only.
+- **#16, `messaging.message.id`.** Now emitted on both halves of every queue hop.
+- **Not in the original matrix, found while fixing it:** queues, datastores, caches and
+  third parties were each being emitted with their own `service.name`, so a two-node SQL
+  diagram published a service called `sql-server`. They are dependencies, not services:
+  the caller's client span carries `db.system.name` or `messaging.destination.name` and
+  the thing itself emits nothing. Fixed for all four kinds. Consumer spans also carried
+  `http.request.method`, claiming a service reached off a queue had arrived over HTTP;
+  they are messaging spans only now.
+- **Not in the original matrix:** Shoebox emitted telemetry about *itself* under a
+  resource named `shoebox`, so a four-service diagram published five services. Removed.
+
+### Recommendation withdrawn: span Links for producer/consumer
+
+Defect #16 and Answer 2 both suggest a span **Link** from the consumer to the producer's
+creation context "as a design follow-up". **That recommendation is withdrawn.**
+
+Context propagates through message headers precisely so that the consumer *continues* the
+trace. A message that starts its own trace is a broken end-to-end view, which is the
+opposite of what either tool exists to demonstrate. Shoebox's parent/child `Activity`
+relationship is correct, and Snowglobe is right to parent them. The `messaging.message.id`
+half of #16 stands and has shipped; the Links half should not be implemented.
+
+### New finding: fixing Snowglobe's messaging names will break the live grid
+
+The consuming side — `PhantomDetectorControl.BuildMessagingKey` in
+`IF.APM.App.Unity.HDRP` — reads the deprecated `messaging.destination`, falling back to a
+legacy `message.destination`, and **never reads `messaging.destination.name`**.
+
+That is why Snowglobe's phantom grid works today: Snowglobe emits the old name, which is
+the only name the consumer can see. Shoebox dual-emits both spellings as a workaround.
+
+**Therefore defect #8 (Snowglobe's bare `messaging.destination`) has a prerequisite.**
+Fix the consumer's key builder to read `messaging.destination.name` *first* before
+renaming anything in Snowglobe, or the rename will silently take the live demo down.
+Full detail in [`../analysis/phantom-detect-e-001-rabbitmq-open.md`](../analysis/phantom-detect-e-001-rabbitmq-open.md) §3.1.
+
+### New finding: where the invalid `publish` enum value came from
+
+`IF.APM.OpenTelemetry.Conventions` (in `IF.APM.Ingestion/src/SDK/DotNet/`) is otherwise
+current and correctly marks the deprecated names `[Obsolete]`. Its doc comment on
+`MessagingOperationType` reads *"e.g., publish, receive, process"* — and `publish` is not
+a member of that enum. That comment is IntelliSense-visible at every call site, and is the
+most plausible source of defect #5. **Fix the comment**, or the same defect will be
+written again by the next person who trusts the tooltip.
+
+### Snowglobe: outstanding
+
+Nothing in Snowglobe's half of this report has been acted on. The fabrications
+(`browser.page`, the three `db.redis.*` keys, `db.rows_affected`, `db.docs_count`,
+`messaging.batch_size`), the deprecated HTTP/messaging/database vocabulary, the
+`system.memory.usage` instrument type, and the two invalid GenAI enum values all stand as
+written. See the prerequisite above before starting on the messaging rename.
 
 ---
 

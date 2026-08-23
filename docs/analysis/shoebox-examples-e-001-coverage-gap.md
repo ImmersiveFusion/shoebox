@@ -6,6 +6,27 @@
 
 ---
 
+## Status Addendum (2026-08-23)
+
+*Added after the analysis was written. The body below is unchanged.*
+
+**The architect pass this document was written to feed has not been run.** No taxonomy has
+been chosen, no example has been cut, and the four byte-identical cache examples (§4.1) are
+all still shipping. Every recommendation in §12 is still open, with one exception:
+
+**§3.1 item 18, E-005 and E-006 are now stale.** `Pod.DefaultLatencyMs` is no longer dead
+code. Spans are given start and end times from a modelled clock
+(`TopologyRunner.cs:142`, `:286`, `:373`), so a trace now has a readable shape instead of
+hairlines, and a refused call is deliberately the *fastest* thing in the trace at 2ms —
+which is itself the tell worth teaching. **The prerequisite engineering fix named in §12's
+second bullet is therefore done**, and "latency as a lesson" is now a pure curriculum
+decision with no code blocking it.
+
+Everything else — the redundancy findings, the zero-coverage capabilities, and the FMEA
+scoring of the three candidate taxonomies — stands as written.
+
+---
+
 ## 1. Executive Summary (L0)
 
 Shoebox ships 16 example diagrams to teach people how to read distributed traces. We checked what the tool can actually do against what the 16 examples actually show, and found a big gap: the tool supports several genuinely useful lessons — a whole service being down (not just one broken call), a call to an outside company like a payment processor, one step being much slower than the rest — and **none of the 16 examples demonstrate any of them**. Meanwhile, four of the examples (the four "Redis" ones) are exact, byte-for-byte duplicates of each other: pasting any of them and firing the request produces literally the same output, so a curious learner who tries all four learns nothing the first one didn't already teach.
