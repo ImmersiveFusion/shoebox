@@ -1,54 +1,47 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Net;
-using System.Net.Sockets;
 
 namespace Shoebox.Api.Emit;
 
 /// <summary>
-/// Where one run's telemetry goes, and what it carries on the way.
+/// Where this instance's telemetry goes, and what it carries on the way.
 ///
-/// This deliberately mirrors Snowglobe's cmd/snowglobe/main.go. Same precedence,
-/// same header format, same TLS-unless-told-otherwise default, so that knowing one
-/// tool means knowing the other. The difference is only in how the explicit value
-/// arrives: Snowglobe takes -endpoint and -headers on the command line, and Shoebox
-/// takes them from whoever is looking at the page, because a hosted sandbox has no
-/// command line to pass flags on.
+/// Operator configuration, resolved once at startup. The same two things Snowglobe
+/// takes as -endpoint and -headers, in the same formats, set by whoever runs the
+/// thing rather than by whoever is looking at it. A visitor has no say in this and
+/// does not need one: they read their traces in whatever backend the deployment is
+/// wired to.
 /// </summary>
 public sealed record OtlpTarget(Uri Endpoint, string Headers)
 {
     /// <summary>
-    /// Distinguishes one target from another. Never logged and never exported: the
-    /// headers can carry an API key, so this is for keying, not for display.
-    /// </summary>
-    public string Key => $"{Endpoint}|{Headers}";
-
-    /// <summary>
-    /// Precedence: the explicit value, then OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, then
-    /// OTEL_EXPORTER_OTLP_ENDPOINT, then nothing at all. Nothing means the exporter
-    /// is left off rather than defaulted to localhost, so an unconfigured instance
-    /// emits nothing instead of retrying against a port nobody is listening on.
+    /// Precedence: <c>Otlp:Endpoint</c> from configuration, which already merges
+    /// appsettings.json with <c>Otlp__Endpoint</c> in the environment, then the
+    /// standard <c>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</c> and
+    /// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, so an environment already configured the
+    /// OpenTelemetry way needs no Shoebox-specific setup.
     ///
-    /// Headers follow the same shape: the explicit value, then
-    /// OTEL_EXPORTER_OTLP_HEADERS.
+    /// Nothing configured resolves to null, and the exporter is then left off rather
+    /// than defaulted to localhost, so an unconfigured instance emits nothing instead
+    /// of retrying against a port nobody is listening on.
     /// </summary>
-    public static OtlpTarget? Resolve(string? endpoint, string? headers, out string? error)
+    public static OtlpTarget? FromConfiguration(IConfiguration config, out string? error)
     {
         error = null;
 
         var raw = FirstNonEmpty(
-            endpoint,
-            Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
-            Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT"));
+            config["Otlp:Endpoint"],
+            config["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
+            config["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
         if (raw is null) return null;
 
         if (!TryParseEndpoint(raw, out var uri, out error)) return null;
 
-        var headerString = NormalizeHeaders(FirstNonEmpty(
-            headers,
-            Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS")));
+        var headers = NormalizeHeaders(FirstNonEmpty(
+            config["Otlp:Headers"],
+            config["OTEL_EXPORTER_OTLP_HEADERS"]));
 
-        return new OtlpTarget(uri, headerString);
+        return new OtlpTarget(uri, headers);
     }
 
     /// <summary>
@@ -99,6 +92,8 @@ public sealed record OtlpTarget(Uri Endpoint, string Headers)
         var pairs = new List<string>();
         foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
         {
+            // First '=' only. Base64 and JWTs both end in padding, and cutting on the
+            // last one truncates the credential in a way that presents as a bad key.
             var cut = part.IndexOf('=');
             if (cut <= 0) continue;
 
@@ -110,97 +105,6 @@ public sealed record OtlpTarget(Uri Endpoint, string Headers)
         }
 
         return string.Join(",", pairs);
-    }
-
-    /// <summary>
-    /// Refuses the addresses that make SSRF worth attempting: loopback, link-local,
-    /// unique-local and the private ranges, plus anything that resolves to them.
-    ///
-    /// This is the whole of the answer to a hosted instance accepting a destination
-    /// from a stranger. There is no switch to turn the feature off, because a switch
-    /// only the operator can reach is not a mitigation for a tool whose promise is no
-    /// account and no install: refusing the addresses worth forging against is.
-    ///
-    /// Skipped in Development, where localhost is the whole point: a Collector on
-    /// 4317 is the normal thing to be pointing at while working.
-    ///
-    /// Known residual: validation resolves the name, and the exporter resolves it
-    /// again when it connects. A name that answers differently between those two
-    /// moments would slip past this. Closing it means pinning the resolved address
-    /// through to the socket, which the OTLP exporter does not expose.
-    /// </summary>
-    public static bool IsReachableTarget(Uri endpoint, bool isDevelopment, out string? error)
-    {
-        error = null;
-        if (isDevelopment) return true;
-
-        var host = endpoint.DnsSafeHost;
-
-        IPAddress[] addresses;
-        if (IPAddress.TryParse(host, out var literal))
-        {
-            addresses = new[] { literal };
-        }
-        else
-        {
-            try
-            {
-                addresses = Dns.GetHostAddresses(host);
-            }
-            catch (SocketException)
-            {
-                error = "endpoint host does not resolve";
-                return false;
-            }
-        }
-
-        if (addresses.Length == 0)
-        {
-            error = "endpoint host does not resolve";
-            return false;
-        }
-
-        foreach (var address in addresses)
-        {
-            if (IsPrivate(address))
-            {
-                error = "endpoint resolves to a private or loopback address";
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsPrivate(IPAddress address)
-    {
-        if (IPAddress.IsLoopback(address)) return true;
-
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
-            var b = address.GetAddressBytes();
-            return b[0] switch
-            {
-                10 => true,
-                127 => true,
-                169 when b[1] == 254 => true,  // link-local, and 169.254.169.254 is the cloud metadata service
-                172 when b[1] >= 16 && b[1] <= 31 => true,
-                192 when b[1] == 168 => true,
-                0 => true,
-                _ => false,
-            };
-        }
-
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
-        {
-            if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal) return true;
-            if (address.IsIPv4MappedToIPv6) return IsPrivate(address.MapToIPv4());
-
-            var b = address.GetAddressBytes();
-            if ((b[0] & 0xFE) == 0xFC) return true; // fc00::/7 unique local
-        }
-
-        return false;
     }
 
     private static string? FirstNonEmpty(params string?[] values)

@@ -57,44 +57,77 @@ Each simulated pod gets its own `TracerProvider` with a Resource carrying
 
 ## Where the telemetry goes
 
-Shoebox reads the standard OTLP variables, the same ones and in the same
-precedence as [Snowglobe](https://github.com/ImmersiveFusion/snowglobe):
+One destination per instance, decided at startup by whoever runs it. Snowglobe
+takes `-endpoint` and `-headers` on the command line; Shoebox reads the same two
+things from configuration, in the same two formats, so knowing one tool means
+knowing the other.
 
-| Variable | Effect |
-|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Where to export. A URL, or a bare `host:port`, which is assumed to be TLS |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The same, and it wins over the general one |
-| `OTEL_EXPORTER_OTLP_HEADERS` | `key=value` pairs, comma-separated |
+| Setting | Environment equivalent | Effect |
+|---|---|---|
+| `Otlp:Endpoint` | `Otlp__Endpoint` | Where to export. A URL, or a bare `host:port`, which is assumed to be TLS |
+| `Otlp:Headers` | `Otlp__Headers` | `key=value` pairs, comma-separated |
 
-Jaeger, Tempo, Grafana, SigNoz, a Collector, or anything else that speaks OTLP.
-Runs still execute with nothing configured; they just do not go anywhere, and the
-UI says so, because a person seeing no traces needs to tell an unset endpoint from
-a broken diagram.
+When those are empty the standard OpenTelemetry variables are read instead, so an
+environment already configured for OTel needs nothing Shoebox-specific:
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, then `OTEL_EXPORTER_OTLP_ENDPOINT`, and
+`OTEL_EXPORTER_OTLP_HEADERS`.
 
-### Sending traces to your own backend
+Jaeger, Tempo, Grafana, SigNoz, a Collector, or anything else that speaks OTLP. No
+vendor name appears anywhere in the decision, which is the point.
 
-Snowglobe takes `-endpoint` and `-headers` on the command line. A hosted Shoebox
-has no command line, and you cannot set an environment variable on somebody else's
-server, so the same two knobs are in the page: a destination and its headers, in
-the same two formats. What you type wins over whatever the instance is configured
-with, exactly as a flag beats the environment in Snowglobe.
+**Nothing configured is a supported state.** Runs still execute, they just do not
+go anywhere, and the UI says so, because a person seeing no traces needs to tell an
+unset endpoint from a broken diagram. What is *not* supported is a broken endpoint:
+a malformed `Otlp:Endpoint` refuses to start rather than exporting nowhere quietly
+for the life of the deployment.
 
-It is always available, including on the deployed instance. That is the point:
-without it, "no account, no install, real OpenTelemetry out" would stop at the
-third clause for everybody who did not host it themselves.
+**A visitor has no say in this and needs none.** Nothing about a run carries a
+destination, so a request cannot redirect telemetry. Whoever is looking at a
+deployed instance reads their traces in whatever backend that deployment is wired
+to.
 
-Your endpoint and headers stay in your browser, go out only with a run, are never
-written to the shareable link, and are never stored on the server. Leave them empty
-and runs go wherever the instance was configured to send them.
+### Configuring a deployment
 
-What makes this safe to offer publicly is not a switch, since a switch only the
-operator can reach helps nobody typing into the page. It is the address check:
-outside Development, an endpoint resolving to loopback, link-local, unique-local or
-a private range is refused, `169.254.169.254` among them. **Known gap:** the name is
-resolved once to check it and again by the exporter when it connects, so a name that
-answers differently between those two moments would get past it. Closing that means
-pinning the resolved address through to the socket, which the OTLP exporter does not
-expose.
+Application settings on the host, the ordinary way. On Azure App Service, an app
+setting named `Otlp__Endpoint` becomes `Otlp:Endpoint` with no code involved. Do
+not put a key in `appsettings.json`: it is committed.
+
+### Configuring your machine
+
+Every settings file in this repo is committed, `appsettings.Development.json` and
+`launchSettings.json` included, so an API key in any of them is an API key in the
+history. Local settings go in user secrets instead, which live under your profile
+rather than the working tree and are read in Development only:
+
+```bash
+dotnet user-secrets --project src/Shoebox.Api set "Otlp:Endpoint" "otlp.example.com:443"
+dotnet user-secrets --project src/Shoebox.Api set "Otlp:Headers"  "api-key=YOUR_KEY"
+```
+
+`dotnet user-secrets --project src/Shoebox.Api list` shows what is set, and prints
+the key in full, so mind who is looking.
+
+Environment variables work as well and need no project change, which suits a
+one-off run:
+
+```bash
+Otlp__Endpoint=otlp.example.com:443 Otlp__Headers="api-key=YOUR_KEY" \
+  dotnet run --project src/Shoebox.Api
+```
+
+That does put the key in shell history and in the process listing, so it is the
+worse of the two for anything you type twice.
+
+Confirm either one landed without going near the UI:
+
+```bash
+curl -s localhost:5168/otlp/status
+```
+
+`configured: true` and the endpoint echoed back means the exporter is on. It does
+not mean the backend accepted anything: export is best effort and a run will not
+fail because the far end refused it, so check your backend for the trace id the run
+returns.
 
 ## Running it
 
@@ -111,9 +144,8 @@ Nothing else. No SQL Server, no Redis, no containers.
 ### Two processes
 
 ```bash
-# API on 5168. Drop OTEL_EXPORTER_OTLP_ENDPOINT and runs still execute,
-# they just do not go anywhere, and the UI says so.
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+# API on 5168. Where it exports comes from user secrets, see above. With none
+# set, runs still execute, they just do not go anywhere, and the UI says so.
 ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5168 \
   dotnet run --project src/Shoebox.Api --no-launch-profile
 
@@ -141,8 +173,8 @@ curl -X POST "http://localhost:5168/run?sandboxId=$ID" \
 ### Building and testing
 
 ```bash
-npm --prefix src/Shoebox.Spa run build -- --configuration production   # ~428 kB initial, no budget warning
-dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 25 tests
+npm --prefix src/Shoebox.Spa run build -- --configuration production   # ~434 kB initial, no budget warning
+dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 41 tests
 ```
 
 ## How isolation works
@@ -188,15 +220,19 @@ scenario needs a code change, the design has gone wrong.
 
 ## Status
 
-The rework described above is **not deployed anywhere yet**. There is no
-Dockerfile, no workflow and no infrastructure-as-code in this repo, and nothing
-copies the built front end into the API's `wwwroot`. Running it locally is the
-only way to use it today.
+The rework goes to **[shoebox.deepcube.ai](https://shoebox.deepcube.ai)**, which
+becomes the link target for this project. It binds to the same App Service that
+[chaos.deepcube.ai](https://chaos.deepcube.ai/) already points at, so this is a
+hostname and a build, not new infrastructure.
 
-[chaos.deepcube.ai](https://chaos.deepcube.ai/) is still serving the previous
-version of this project, the one that needed SQL Server and Redis. It stays up
-until whoever gives the demo for real runs it on the new build and says it is as
-good or better.
+Two things in this repo still stand in the way, and neither is a setting: there is
+no Dockerfile, no workflow and no infrastructure-as-code here, and nothing copies
+the built front end into the API's `wwwroot`, so the API serves no page outside
+Development. Running it locally is still the only way to use it today.
+
+`chaos.deepcube.ai` is serving the previous version of this project, the one that
+needed SQL Server and Redis. It stays up until whoever gives the demo for real runs
+it on the new build and says it is as good or better.
 
 ## The family
 

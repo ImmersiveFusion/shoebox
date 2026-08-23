@@ -43,15 +43,6 @@ export class ShoeboxComponent implements OnInit {
   readonly expanded = signal<'editor' | 'viewer' | null>(null);
 
   /**
-   * Where this browser sends its runs, the same two knobs Snowglobe exposes as
-   * -endpoint and -headers. Empty means the server's own destination.
-   */
-  otlpEndpoint = '';
-  otlpHeaders = '';
-  readonly otlpError = signal<string | null>(null);
-  readonly showDestination = signal(false);
-
-  /**
    * Mermaid is roughly a quarter of a megabyte, so it is loaded on demand rather
    * than shipped in the initial bundle. The page paints, then the renderer
    * arrives. That matters for a tool whose whole distribution model is somebody
@@ -96,7 +87,6 @@ export class ShoeboxComponent implements OnInit {
       this.service.createSandbox().subscribe(r => (this.sandboxId = r.sandboxId));
     }
 
-    this.loadDestination();
     this.service.otlpStatus().subscribe(s => this.otlp.set(s));
 
     // The graph follows you as you type, but not on every keystroke.
@@ -125,53 +115,10 @@ export class ShoeboxComponent implements OnInit {
 
   /** Nothing moves until the user says so. This is the core mechanic. */
   fire(): void {
-    this.otlpError.set(null);
-    const otlp = { endpoint: this.otlpEndpoint, headers: this.otlpHeaders };
-
-    this.service.run(this.diagram, this.runIndex, this.sandboxId, otlp).subscribe({
-      next: result => {
-        this.result.set(result);
-        this.runIndex += 1;
-      },
-      // A rejected destination has to say so. Silently falling back to the
-      // server's own would mean somebody watching their own backend for traces
-      // that were never coming.
-      error: response => {
-        this.otlpError.set(response?.error?.error ?? 'the run could not be sent');
-        this.showDestination.set(true);
-      },
+    this.service.run(this.diagram, this.runIndex, this.sandboxId).subscribe(result => {
+      this.result.set(result);
+      this.runIndex += 1;
     });
-  }
-
-  /**
-   * Kept in this browser and nowhere else. Not in the URL, which the diagram uses,
-   * because headers carry credentials and a link is meant to be shareable.
-   */
-  saveDestination(): void {
-    this.otlpError.set(null);
-    try {
-      localStorage.setItem('shoebox.otlp.endpoint', this.otlpEndpoint);
-      localStorage.setItem('shoebox.otlp.headers', this.otlpHeaders);
-    } catch {
-      // Private windows and blocked site data both throw. The values still work
-      // for this session, they just will not survive a reload.
-    }
-  }
-
-  forgetDestination(): void {
-    this.otlpEndpoint = '';
-    this.otlpHeaders = '';
-    this.saveDestination();
-  }
-
-  private loadDestination(): void {
-    try {
-      this.otlpEndpoint = localStorage.getItem('shoebox.otlp.endpoint') ?? '';
-      this.otlpHeaders = localStorage.getItem('shoebox.otlp.headers') ?? '';
-    } catch {
-      // Same as above: unreadable storage is not an error worth showing anyone.
-    }
-    this.showDestination.set(this.otlpEndpoint.length > 0);
   }
 
   resetRuns(): void {

@@ -5,6 +5,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      Local OTLP settings live outside the repository. Otlp:Headers carries an API
+      key, and every other place to put it here is tracked: appsettings.json,
+      appsettings.Development.json and launchSettings.json are all committed, so a
+      key in any of them is a key in the history.
+
+      Loaded in Development only, from
+      %APPDATA%\Microsoft\UserSecrets\shoebox-api\secrets.json:
+
+        dotnet user-secrets set "Otlp:Endpoint" "otlp.example.com:443"
+        dotnet user-secrets set "Otlp:Headers"  "api-key=YOUR_KEY"
+    -->
+    <UserSecretsId>shoebox-api</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

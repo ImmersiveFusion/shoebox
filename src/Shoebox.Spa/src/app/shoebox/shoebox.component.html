@@ -86,67 +86,15 @@
     <span class="runcount">next run: <strong>{{ runIndex }}</strong></span>
 
     <span class="otlp" *ngIf="otlp() as status">
-      <ng-container *ngIf="otlpEndpoint.trim(); else serverTarget">
-        sending to <code>{{ otlpEndpoint }}</code>
+      <ng-container *ngIf="status.configured; else noEndpoint">
+        exporting to <code>{{ status.endpoint }}</code>
       </ng-container>
-      <ng-template #serverTarget>
-        <ng-container *ngIf="status.configured; else noEndpoint">
-          exporting to <code>{{ status.endpoint }}</code>
-        </ng-container>
-        <ng-template #noEndpoint>
-          <strong>This instance exports nowhere by default.</strong> Runs still execute.
-          Name a destination below to get these traces yourself.
-        </ng-template>
+      <ng-template #noEndpoint>
+        <strong>No OTLP endpoint configured.</strong> Runs still execute, nothing is exported.
+        Set <code>Otlp:Endpoint</code>, or <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, to any
+        OTLP backend.
       </ng-template>
     </span>
-
-    <button type="button" class="destination-toggle"
-            (click)="showDestination.set(!showDestination())">
-      {{ showDestination() ? 'Hide destination' : 'Send it somewhere' }}
-    </button>
-  </section>
-
-  <!--
-    The same two knobs Snowglobe exposes as -endpoint and -headers, in the same
-    formats. A hosted sandbox has no command line to pass flags on, so this is where
-    they live, and it is the only way somebody looking at a deployed instance can get
-    their own traces.
-  -->
-  <section class="panel destination" *ngIf="showDestination()">
-    <label for="otlp-endpoint">Send these traces to your own backend</label>
-
-    <div class="destination-fields">
-      <input id="otlp-endpoint"
-             type="text"
-             spellcheck="false"
-             autocomplete="off"
-             placeholder="https://otlp.example.com:4317"
-             [(ngModel)]="otlpEndpoint"
-             (ngModelChange)="saveDestination()">
-      <input id="otlp-headers"
-             type="password"
-             spellcheck="false"
-             autocomplete="off"
-             placeholder="api-key=SECRET,x-team=platform"
-             [(ngModel)]="otlpHeaders"
-             (ngModelChange)="saveDestination()">
-      <button type="button" (click)="forgetDestination()">Forget</button>
-    </div>
-
-    <p class="error" *ngIf="otlpError()">{{ otlpError() }}</p>
-
-    <p class="note">
-      A URL, or a bare <code>host:port</code>, which is assumed to be TLS. Headers are
-      <code>key=value</code>, comma-separated, exactly as
-      <code>OTEL_EXPORTER_OTLP_HEADERS</code> and Snowglobe's <code>-headers</code>
-      take them.
-    </p>
-    <p class="note">
-      <strong>Kept in this browser and sent only with a run.</strong> Not written to
-      the shareable link, which carries only the diagram, and never stored on the
-      server. Leave it empty and runs go wherever this instance was configured to
-      send them.
-    </p>
   </section>
 
   <section class="panel result" *ngIf="result() as run">

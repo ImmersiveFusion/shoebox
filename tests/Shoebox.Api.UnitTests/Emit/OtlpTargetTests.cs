@@ -1,31 +1,23 @@
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using NUnit.Framework;
 using Shoebox.Api.Emit;
 
 namespace Shoebox.Api.UnitTests.Emit
 {
     /// <summary>
-    /// These mirror cmd/snowglobe/endpoint_test.go on purpose. The two tools are
-    /// meant to resolve a destination the same way, and the cheapest way to keep
-    /// that true is to assert the same things about both.
+    /// These mirror cmd/snowglobe/endpoint_test.go on purpose. Both tools are
+    /// configured by whoever runs them, in the same two formats and the same
+    /// precedence, and the cheapest way to keep that true is to assert the same
+    /// things about both.
     /// </summary>
     [TestFixture]
     public class OtlpTargetTests
     {
-        [SetUp]
-        [TearDown]
-        public void ClearEnvironment()
-        {
-            foreach (var name in new[]
-                     {
-                         "OTEL_EXPORTER_OTLP_ENDPOINT",
-                         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-                         "OTEL_EXPORTER_OTLP_HEADERS",
-                     })
-            {
-                Environment.SetEnvironmentVariable(name, null);
-            }
-        }
+        private static IConfiguration Config(params (string Key, string Value)[] pairs) =>
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(pairs.Select(p => new KeyValuePair<string, string?>(p.Key, p.Value)))
+                .Build();
 
         [Test]
         public void A_Bare_Host_Port_Gets_Https_Not_A_Guess_At_Plaintext()
@@ -61,52 +53,73 @@ namespace Shoebox.Api.UnitTests.Emit
         }
 
         [Test]
-        public void An_Explicit_Endpoint_Beats_The_Environment()
+        public void App_Settings_Win_Over_The_Standard_Variables()
         {
-            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "https://from-env:4317");
+            var config = Config(
+                ("Otlp:Endpoint", "https://from-appsettings:4317"),
+                ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://from-env:4317"));
 
-            var target = OtlpTarget.Resolve("https://explicit:4317", null, out _);
+            OtlpTarget.FromConfiguration(config, out _)!.Endpoint.Host.Should().Be("from-appsettings");
+        }
 
-            target!.Endpoint.Host.Should().Be("explicit");
+        [Test]
+        public void The_Standard_Variables_Are_Read_When_App_Settings_Are_Empty()
+        {
+            // An environment already configured for OpenTelemetry needs no
+            // Shoebox-specific setup.
+            var config = Config(("OTEL_EXPORTER_OTLP_ENDPOINT", "https://from-env:4317"));
+
+            OtlpTarget.FromConfiguration(config, out _)!.Endpoint.Host.Should().Be("from-env");
         }
 
         [Test]
         public void The_Signal_Specific_Variable_Beats_The_General_One()
         {
-            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "https://general:4317");
-            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://traces:4317");
+            var config = Config(
+                ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://general:4317"),
+                ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://traces:4317"));
 
-            var target = OtlpTarget.Resolve(null, null, out _);
-
-            target!.Endpoint.Host.Should().Be("traces");
+            OtlpTarget.FromConfiguration(config, out _)!.Endpoint.Host.Should().Be("traces");
         }
 
         [Test]
-        public void No_Endpoint_Anywhere_Resolves_To_Nothing_Rather_Than_Localhost()
+        public void Nothing_Configured_Resolves_To_Nothing_Rather_Than_Localhost()
         {
             // An unconfigured instance emits nothing instead of retrying forever
             // against a port nobody is listening on.
-            OtlpTarget.Resolve(null, null, out _).Should().BeNull();
+            OtlpTarget.FromConfiguration(Config(), out var error).Should().BeNull();
+            error.Should().BeNull();
         }
 
         [Test]
-        public void Headers_Fall_Back_To_The_Standard_Variable()
+        public void An_Empty_Endpoint_Setting_Counts_As_Unconfigured()
         {
-            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS", "api-key=SECRET,x-team=platform");
-
-            var target = OtlpTarget.Resolve("https://otlp.example.com:4317", null, out _);
-
-            target!.Headers.Should().Be("api-key=SECRET,x-team=platform");
+            // The shipped appsettings.json carries the key with an empty value so it
+            // is discoverable. That must not read as a configured endpoint.
+            OtlpTarget.FromConfiguration(Config(("Otlp:Endpoint", "")), out _).Should().BeNull();
         }
 
         [Test]
-        public void Explicit_Headers_Beat_The_Environment()
+        public void A_Bad_Endpoint_Reports_Why_So_Startup_Can_Refuse()
         {
-            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS", "api-key=FROM_ENV");
+            OtlpTarget.FromConfiguration(Config(("Otlp:Endpoint", "ftp://nope")), out var error).Should().BeNull();
 
-            var target = OtlpTarget.Resolve("https://otlp.example.com:4317", "api-key=EXPLICIT", out _);
+            error.Should().NotBeNullOrWhiteSpace();
+        }
 
-            target!.Headers.Should().Be("api-key=EXPLICIT");
+        [Test]
+        public void Headers_Come_From_App_Settings_Or_The_Standard_Variable()
+        {
+            var fromSettings = Config(
+                ("Otlp:Endpoint", "https://otlp.example.com:4317"),
+                ("Otlp:Headers", "api-key=FROM_SETTINGS"),
+                ("OTEL_EXPORTER_OTLP_HEADERS", "api-key=FROM_ENV"));
+            OtlpTarget.FromConfiguration(fromSettings, out _)!.Headers.Should().Be("api-key=FROM_SETTINGS");
+
+            var fromEnv = Config(
+                ("Otlp:Endpoint", "https://otlp.example.com:4317"),
+                ("OTEL_EXPORTER_OTLP_HEADERS", "api-key=SECRET,x-team=platform"));
+            OtlpTarget.FromConfiguration(fromEnv, out _)!.Headers.Should().Be("api-key=SECRET,x-team=platform");
         }
 
         [Test]
@@ -130,31 +143,5 @@ namespace Shoebox.Api.UnitTests.Emit
             // truncate the credential and the failure would look like a bad key.
             OtlpTarget.NormalizeHeaders("authorization=Bearer abc==").Should().Be("authorization=Bearer abc==");
         }
-
-        [TestCase("http://127.0.0.1:4318")]
-        [TestCase("http://localhost:4318")]
-        [TestCase("http://10.0.0.5:4317")]
-        [TestCase("http://192.168.1.10:4317")]
-        [TestCase("http://172.16.5.4:4317")]
-        [TestCase("http://169.254.169.254")]
-        public void Private_Addresses_Are_Refused_Off_A_Developer_Machine(string raw)
-        {
-            // A hosted instance taking an endpoint from a stranger is a server-side
-            // request forgery primitive. 169.254.169.254 is the cloud metadata
-            // service, which is the reason this list is not optional.
-            OtlpTarget.TryParseEndpoint(raw, out var uri, out _).Should().BeTrue();
-
-            OtlpTarget.IsReachableTarget(uri!, isDevelopment: false, out var error).Should().BeFalse();
-            error.Should().NotBeNullOrWhiteSpace();
-        }
-
-        [Test]
-        public void Localhost_Is_Fine_In_Development_Because_That_Is_The_Whole_Point()
-        {
-            OtlpTarget.TryParseEndpoint("http://localhost:4318", out var uri, out _).Should().BeTrue();
-
-            OtlpTarget.IsReachableTarget(uri!, isDevelopment: true, out _).Should().BeTrue();
-        }
-
     }
 }

@@ -15,7 +15,9 @@ namespace Shoebox.Api.UnitTests.Run
         [SetUp]
         public void SetUp()
         {
-            _pool = new PodTracerPool();
+            // No export target: these tests are about what the walk produces, not
+            // about where it goes.
+            _pool = new PodTracerPool(target: null);
             _runner = new TopologyRunner(_pool);
         }
 

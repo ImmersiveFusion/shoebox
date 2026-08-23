@@ -16,9 +16,8 @@ public static class SandboxExtensions
     /// hardcoded an Api-Key header from Otlp:ApiKey, which quietly locked the tool
     /// to one backend.
     /// </summary>
-    public static void ConfigureOpenTelemetry(this WebApplicationBuilder builder)
+    public static void ConfigureOpenTelemetry(this WebApplicationBuilder builder, Shoebox.Api.Emit.OtlpTarget? target)
     {
-        var otlp = Shoebox.Api.Emit.PodTracerPool.OtlpConfigured;
 
         var resourceBuilder = ResourceBuilder.CreateDefault().AddService(
             "shoebox",
@@ -32,7 +31,11 @@ public static class SandboxExtensions
             options.AddOpenTelemetry(loggerOptions =>
             {
                 loggerOptions.SetResourceBuilder(resourceBuilder);
-                if (otlp) loggerOptions.AddOtlpExporter();
+                if (target is not null) loggerOptions.AddOtlpExporter(options =>
+                    {
+                        options.Endpoint = target.Endpoint;
+                        if (target.Headers.Length > 0) options.Headers = target.Headers;
+                    });
 
                 loggerOptions.IncludeFormattedMessage = true;
                 loggerOptions.IncludeScopes = true;
@@ -48,7 +51,11 @@ public static class SandboxExtensions
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation()
                     .AddProcessInstrumentation();
-                if (otlp) metrics.AddOtlpExporter();
+                if (target is not null) metrics.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = target.Endpoint;
+                    if (target.Headers.Length > 0) options.Headers = target.Headers;
+                });
             })
             .WithTracing(tracing =>
             {
@@ -56,7 +63,11 @@ public static class SandboxExtensions
                     .AddSource(SandboxSources.DefaultActivitySource.Name)
                     .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation();
-                if (otlp) tracing.AddOtlpExporter();
+                if (target is not null) tracing.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = target.Endpoint;
+                    if (target.Headers.Length > 0) options.Headers = target.Headers;
+                });
             });
     }
 }

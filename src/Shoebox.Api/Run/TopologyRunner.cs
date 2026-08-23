@@ -26,18 +26,7 @@ public sealed class TopologyRunner
 
     public TopologyRunner(PodTracerPool pool) => _pool = pool;
 
-    /// <summary>
-    /// Runs against the server's own export target.
-    /// </summary>
-    public RunResult Run(Graph graph, int runIndex, string? sandboxId) =>
-        Run(graph, runIndex, sandboxId, scope: null);
-
-    /// <summary>
-    /// Runs against <paramref name="scope"/> when the caller brought its own export
-    /// target, and against the server's otherwise. The caller owns the scope and
-    /// disposing it is what flushes the spans.
-    /// </summary>
-    public RunResult Run(Graph graph, int runIndex, string? sandboxId, PodScope? scope)
+    public RunResult Run(Graph graph, int runIndex, string? sandboxId)
     {
         var entry = graph.Entry;
         if (entry is null)
@@ -54,7 +43,7 @@ public sealed class TopologyRunner
             Baggage.SetBaggage(SandboxConstants.TagKey, sandboxId);
         }
 
-        var state = new RunState(runIndex, scope);
+        var state = new RunState(runIndex);
         Visit(graph, entry, parent: null, state);
 
         return new RunResult(
@@ -77,7 +66,7 @@ public sealed class TopologyRunner
         }
 
         var instance = SelectInstance(pod, state.RunIndex);
-        var source = Source(state, pod.ServiceName, instance);
+        var source = _pool.For(pod.ServiceName, instance);
 
         using var activity = source.StartActivity(
             SpanName(pod),
@@ -112,7 +101,7 @@ public sealed class TopologyRunner
 
     private void EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
     {
-        var source = Source(state, from.ServiceName, instance);
+        var source = _pool.For(from.ServiceName, instance);
         using var activity = source.StartActivity(
             $"{from.ServiceName} -> {to.ServiceName}",
             ActivityKind.Client,
@@ -128,9 +117,6 @@ public sealed class TopologyRunner
         activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
         foreach (var (k, v) in SemanticTags(to)) activity.SetTag(k, v);
     }
-
-    private ActivitySource Source(RunState state, string serviceName, int instance) =>
-        state.Scope is { } scope ? scope.For(serviceName, instance) : _pool.For(serviceName, instance);
 
     /// <summary>
     /// Which replica serves this run. Deterministic round robin, never random.
@@ -190,10 +176,9 @@ public sealed class TopologyRunner
         }
     }
 
-    private sealed class RunState(int runIndex, PodScope? scope)
+    private sealed class RunState(int runIndex)
     {
         public int RunIndex { get; } = runIndex;
-        public PodScope? Scope { get; } = scope;
         public string? RootTraceId { get; set; }
         public List<string> ServedBy { get; } = new();
         public int SpanCount { get; set; }

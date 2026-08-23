@@ -95,63 +95,6 @@ textarea {
   }
 }
 
-.destination {
-  input {
-    flex: 1 1 18rem;
-    min-width: 0;
-    background: var(--navy);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0.6rem 0.7rem;
-    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-    font-size: 0.9rem;
-  }
-
-  .destination-fields {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-  }
-
-  button {
-    flex: none;
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0 0.9rem;
-    cursor: pointer;
-
-    &:hover { color: var(--teal-bright); border-color: var(--teal); }
-  }
-
-  .note {
-    margin: 0.6rem 0 0;
-    color: var(--muted);
-    font-size: 0.8rem;
-    max-width: 84ch;
-  }
-
-  .error {
-    margin: 0.6rem 0 0;
-    color: var(--magenta);
-    font-size: 0.85rem;
-  }
-}
-
-button.destination-toggle {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.35rem 0.7rem;
-  font-size: 0.8rem;
-  cursor: pointer;
-
-  &:hover { color: var(--teal-bright); border-color: var(--teal); }
-}
-
 .panelhead {
   display: flex;
   align-items: baseline;
