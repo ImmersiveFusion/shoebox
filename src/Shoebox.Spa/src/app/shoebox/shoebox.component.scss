@@ -164,7 +164,7 @@ button.chip {
   // Everything else runs clean, and says so the same way.
   &:not(.will-fail):not(.may-fail) {
     background-image:
-      repeating-linear-gradient(0deg, rgba(47, 212, 196, 0.20) 0 1px, transparent 1px 7px);
+      repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.34) 0 1px, transparent 1px 7px);
   }
 
   // Selected wins outright. The solid fill already says which one is loaded, and
