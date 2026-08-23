@@ -1,5 +1,8 @@
 .shoebox {
-  max-width: 1200px;
+  // Wide, but not edge to edge. The diagram is the reason to use the screen, so
+  // the shell gets out of its way; prose keeps its own measure below, because a
+  // 1600px line of text is unreadable no matter how much monitor there is.
+  max-width: min(96vw, 1680px);
   margin: 0 auto;
   padding: 2rem 1.25rem 4rem;
   color: var(--ink);
@@ -217,5 +220,6 @@ footer {
   border-top: 1px solid var(--line);
   padding-top: 1rem;
 
+  p { max-width: 84ch; }
   a { color: var(--teal); }
 }
