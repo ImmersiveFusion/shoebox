@@ -14,7 +14,7 @@
 
   h1 { display: none; }
   .tagline { display: none; }
-  .lede { margin: 0; color: var(--muted); max-width: 62ch; }
+  .lede { margin: 0; color: var(--muted); max-width: 96ch; }
 }
 
 .panel {
@@ -51,6 +51,54 @@ textarea {
   line-height: 1.5;
   resize: vertical;
 }
+
+// Sixteen examples that all fit on screen at once do not need a dropdown, an OS
+// scrollbar, and two clicks. Grouped chips: everything visible, one click, and
+// the description of whatever is selected sits underneath.
+.example-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.example-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.group-name {
+  width: 5.5rem;
+  flex: none;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+button.chip {
+  background: var(--navy);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+
+  &.on {
+    color: #04121a;
+    background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+    border-color: transparent;
+    box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 4px 14px rgba(47, 212, 196, 0.28);
+  }
+}
+
+.examples .hint { margin: 0.75rem 0 0; }
 
 .split {
   display: grid;
@@ -220,6 +268,6 @@ footer {
   border-top: 1px solid var(--line);
   padding-top: 1rem;
 
-  p { max-width: 84ch; }
+  p { max-width: 118ch; }
   a { color: var(--teal); }
 }

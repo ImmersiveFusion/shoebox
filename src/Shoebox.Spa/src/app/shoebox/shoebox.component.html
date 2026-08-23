@@ -10,17 +10,20 @@
   </header>
 
   <section class="panel examples">
-    <label for="example">Start from an example</label>
-    <select id="example" [ngModel]="selectedExampleId" (ngModelChange)="loadExample($event)">
-      <option value="" disabled>Pick one, or just paste your own</option>
-      <optgroup *ngFor="let group of groups" [label]="group">
-        <option *ngFor="let example of examples"
-                [value]="example.id"
-                [hidden]="example.group !== group">
-          {{ example.label }}
-        </option>
-      </optgroup>
-    </select>
+    <label>Start from an example, or just paste your own</label>
+
+    <div class="example-groups">
+      <div class="example-group" *ngFor="let group of groups">
+        <span class="group-name">{{ group }}</span>
+        <button type="button" class="chip"
+                *ngFor="let example of examplesIn(group)"
+                [class.on]="selectedExampleId === example.id"
+                [attr.aria-pressed]="selectedExampleId === example.id"
+                [title]="example.description"
+                (click)="loadExample(example.id)">{{ example.label }}</button>
+      </div>
+    </div>
+
     <p class="hint" *ngIf="descriptionFor(selectedExampleId) as description">{{ description }}</p>
   </section>
 

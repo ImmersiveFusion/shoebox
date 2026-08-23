@@ -109,6 +109,10 @@ export class ShoeboxComponent implements OnInit {
     void this.refresh();
   }
 
+  examplesIn(group: string): readonly Example[] {
+    return this.examples.filter(e => e.group === group);
+  }
+
   descriptionFor(id: string): string {
     return this.examples.find(e => e.id === id)?.description ?? '';
   }
