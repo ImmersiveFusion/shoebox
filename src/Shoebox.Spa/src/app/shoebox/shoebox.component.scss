@@ -165,7 +165,13 @@ button.chip {
   }
 
   // Everything else runs clean, and says so the same way.
-  &:not(.will-fail):not(.may-fail) {
+  //
+  // A real class, not :not(.will-fail):not(.may-fail). Those two :not() arguments
+  // count toward specificity, so that selector outranked .on by a class and kept
+  // its background-image on the selected chip, while .on's background shorthand
+  // still reset the colour to transparent. The result was near-black label text
+  // on the dark panel, which is unreadable.
+  &.wont-fail {
     background-image:
       repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.34) 0 1px, transparent 1px 7px);
   }
@@ -174,11 +180,10 @@ button.chip {
   // a pattern showing through it only muddies the one chip that has to be
   // unmistakable.
   &.on,
+  &.on.wont-fail,
   &.on.will-fail,
   &.on.may-fail {
     color: #04121a;
-    background-color: transparent;
-    background-image: none;
     background: linear-gradient(135deg, var(--teal-bright), var(--teal));
     border-color: transparent;
     box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 4px 14px rgba(47, 212, 196, 0.28);
