@@ -1,73 +1,30 @@
 public static class SandboxExtensions
 {
     /// <summary>
-    /// Telemetry for the Shoebox app itself.
+    /// Console logging, and nothing else.
     ///
-    /// The simulated pods do NOT come through here. Each gets its own
-    /// TracerProvider and its own Resource from
-    /// <see cref="Shoebox.Api.Emit.PodTracerPool"/>, which is what lets one process
-    /// present as many services. Sharing a single Resource was the old constraint
-    /// that made one app permanently one pod.
+    /// Shoebox emits no telemetry of its own. It used to: an AspNetCore server
+    /// span for POST /run, HttpClient spans, runtime and process metrics, all
+    /// under a resource called "shoebox". Every one of those went to the same
+    /// endpoint as the simulation, so a person who pasted a four service diagram
+    /// and looked at their backend found five services, and the extra one was the
+    /// tool they were using.
     ///
-    /// Everything is configured by the standard OTEL_EXPORTER_OTLP_* environment
-    /// variables. No vendor name, no bespoke header and no product-specific setting
-    /// appears anywhere in this file, so it runs against Jaeger, Tempo, Grafana,
-    /// SigNoz, a Collector or anything else that speaks OTLP. The previous version
-    /// hardcoded an Api-Key header from Otlp:ApiKey, which quietly locked the tool
-    /// to one backend.
+    /// That is worse than clutter in something whose entire job is teaching
+    /// people to read a trace. The diagram is supposed to be the whole state, and
+    /// that has to be true of the telemetry too or the lesson has a lie in it.
+    ///
+    /// So the only OTLP that leaves this process now comes from
+    /// <see cref="Shoebox.Api.Emit.PodTracerPool"/>, one provider per simulated
+    /// pod, each with its own Resource. Operating this thing is a job for logs and
+    /// an HTTP status code.
     /// </summary>
     public static void ConfigureOpenTelemetry(this WebApplicationBuilder builder, Shoebox.Api.Emit.OtlpTarget? target)
     {
-
-        var resourceBuilder = ResourceBuilder.CreateDefault().AddService(
-            "shoebox",
-            typeof(Program).Namespace,
-            (typeof(Program).Assembly?.GetName().Version ?? new Version(0, 1, 0)).ToString());
-
         builder.Services.AddLogging(options =>
         {
             options.ClearProviders();
             options.AddConsole();
-            options.AddOpenTelemetry(loggerOptions =>
-            {
-                loggerOptions.SetResourceBuilder(resourceBuilder);
-                if (target is not null) loggerOptions.AddOtlpExporter(options =>
-                    {
-                        options.Endpoint = target.Endpoint;
-                        if (target.Headers.Length > 0) options.Headers = target.Headers;
-                    });
-
-                loggerOptions.IncludeFormattedMessage = true;
-                loggerOptions.IncludeScopes = true;
-                loggerOptions.ParseStateValues = true;
-            });
         });
-
-        builder.Services.AddOpenTelemetry()
-            .WithMetrics(metrics =>
-            {
-                metrics.SetResourceBuilder(resourceBuilder)
-                    .AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation()
-                    .AddProcessInstrumentation();
-                if (target is not null) metrics.AddOtlpExporter(options =>
-                {
-                    options.Endpoint = target.Endpoint;
-                    if (target.Headers.Length > 0) options.Headers = target.Headers;
-                });
-            })
-            .WithTracing(tracing =>
-            {
-                tracing.SetResourceBuilder(resourceBuilder)
-                    .AddSource(SandboxSources.DefaultActivitySource.Name)
-                    .AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation();
-                if (target is not null) tracing.AddOtlpExporter(options =>
-                {
-                    options.Endpoint = target.Endpoint;
-                    if (target.Headers.Length > 0) options.Headers = target.Headers;
-                });
-            });
     }
 }

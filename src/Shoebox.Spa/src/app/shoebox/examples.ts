@@ -116,6 +116,9 @@ export const EXAMPLES: readonly Example[] = [
     diagram: `flowchart LR
   gw[API Gateway] --> orders[Orders API]
   orders --> inv[Inventory API]
+  orders --> pay[Payments API]
+  pay --> ledger[(Ledger DB)]
+  pay --> cache((Rates Cache))
   orders -->|phantom| audit[Audit Service]` },
 
   { id: 'worker-broken-one', group: 'Distributed systems', label: 'Fails one run in five',

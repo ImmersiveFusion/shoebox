@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentAssertions;
 using NUnit.Framework;
 using Shoebox.Api.Emit;
@@ -161,5 +162,27 @@ flowchart LR
             result.ServedBy.Should().Contain("worker-1");
             result.ServedBy.Should().Contain("worker-2");
         }
+
+        [Test]
+        public void A_Run_Is_Its_Own_Trace_Even_Under_An_Unsampled_Ambient_Activity()
+        {
+            // ASP.NET leaves an Activity on the request. With nothing listening to
+            // it, it is not sampled, and a parent-based sampler then drops every
+            // simulated span beneath it: the run reports zero spans and the person
+            // blames their diagram. It also rooted the trace at a service called
+            // shoebox, which is not in anybody's diagram.
+            using var ambientSource = new ActivitySource("ambient-unsampled");
+            using var ambient = new Activity("incoming request").Start();
+
+            const string diagram = @"
+flowchart LR
+  api[Orders API] --> db[(Postgres)]";
+
+            var result = Fire(diagram, 1);
+
+            result.SpanCount.Should().Be(2, "the simulation must record regardless of what is on Activity.Current");
+            Activity.Current.Should().Be(ambient, "the ambient activity has to be put back");
+        }
+
     }
 }

@@ -56,8 +56,28 @@ public sealed class TopologyRunner
             Baggage.SetBaggage(SandboxConstants.TagKey, sandboxId);
         }
 
+        // The simulated trace is its own trace, with the entry pod at the root.
+        //
+        // Without this it is a child of whatever ASP.NET has on Activity.Current
+        // for the incoming request, which does two bad things. The trace comes out
+        // rooted at a service called shoebox that is not in anybody's diagram. And
+        // since nothing listens to that activity any more, it is not sampled, so
+        // the parent-based sampler drops every simulated span underneath it and
+        // the run records nothing at all.
+        //
+        // Detaching is what makes the diagram the whole state, in the telemetry
+        // too and not just in the picture.
+        var ambient = Activity.Current;
+        Activity.Current = null;
         var state = new RunState(runIndex);
-        Visit(graph, entry, parent: null, state);
+        try
+        {
+            Visit(graph, entry, parent: null, state);
+        }
+        finally
+        {
+            Activity.Current = ambient;
+        }
 
         return new RunResult(
             runIndex,
