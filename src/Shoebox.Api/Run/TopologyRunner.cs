@@ -98,7 +98,7 @@ public sealed class TopologyRunner
 
         var named = string.Join(", ", state.Phantoms.Distinct());
         return graph.Notes
-            .Append($"Nothing consumed what was published on this run. {named} never ran, so the trace has a publish with no matching receive and no span anywhere carries its name. That gap is what a backend reads as a phantom service.")
+            .Append($"{named} was called and never reported. Every span naming it belongs to something else, and it has none of its own, which is how a backend infers a service nobody knew about.")
             .ToList();
     }
 
@@ -188,7 +188,8 @@ public sealed class TopologyRunner
             // phantom is defined by not doing.
             if (call.Phantom)
             {
-                state.Phantoms.Add(target.ServiceName);
+                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                EmitCallToNothing(pod, target, activity, state, instance);
                 continue;
             }
 
@@ -295,6 +296,47 @@ public sealed class TopologyRunner
     }
 
     /// <summary>
+    /// The caller's side of a call to something that never reports.
+    ///
+    /// This is the whole of a phantom and it is worth being exact about what is
+    /// and is not emitted. The caller emits its own CLIENT span, under its own
+    /// service.name, naming the far end in server.address exactly as it would for
+    /// any outbound call. The far end emits nothing, and nothing downstream of it
+    /// happens. No span carries the phantom's service.name, because it has none:
+    /// it has never introduced itself.
+    ///
+    /// That asymmetry is what a backend keys on. A peer that is named by other
+    /// people's spans and never speaks for itself is a service you did not know
+    /// you had, which is Snowglobe's definition of the word.
+    ///
+    /// The name goes in server.address unchanged. An earlier attempt appended
+    /// ".internal" to it, which invented a hostname nothing could ever emit
+    /// under, and turned every ordinary service in the diagram into a phantom.
+    /// </summary>
+    private void EmitCallToNothing(Pod from, Pod to, Activity? parent, RunState state, int instance)
+    {
+        var source = _pool.For(from.ServiceName, instance);
+        using var activity = source.StartActivity(
+            $"{from.ServiceName} -> {to.ServiceName}",
+            ActivityKind.Client,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        state.Clock = state.Clock.AddMilliseconds(to.DefaultLatencyMs);
+        state.Phantoms.Add(to.ServiceName);
+        if (activity is null) return;
+
+        activity.SetEndTime(state.Clock.UtcDateTime);
+        state.SpanCount++;
+
+        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        activity.SetTag("http.request.method", "POST");
+        activity.SetTag("server.address", to.ServiceName);
+        activity.SetTag("server.port", 8080);
+        activity.SetTag("url.full", $"http://{to.ServiceName}:8080/{to.ServiceName}");
+    }
+
+    /// <summary>
     /// A refused call comes back fast. That is the tell, and it is worth showing:
     /// the failing hop is usually the shortest bar in the waterfall, not the
     /// longest, which is the opposite of what people expect to look for.
@@ -382,17 +424,18 @@ public sealed class TopologyRunner
                 yield return new("http.request.method", "GET");
 
                 // http.route is a SERVER-span attribute and appears nowhere in the
-                // client table. It was going on every service span regardless of
-                // kind, so internal calls carried a route they never served.
+                // client table, so it is conditional on kind.
+                //
+                // And nothing else. A previous attempt put server.address here as
+                // "{service}.internal", which invented a hostname that nothing
+                // ever emits under, so every internal service in the diagram was
+                // inferred as a phantom peer. server.* describes the far end of an
+                // outbound call; this span is the pod itself, and the pod is not
+                // its own peer. Naming a host that does not exist is the same
+                // fabrication as naming an attribute that does not exist.
                 if (kind == ActivityKind.Server)
                 {
                     yield return new("http.route", $"/{pod.ServiceName}");
-                }
-                else
-                {
-                    yield return new("server.address", $"{pod.ServiceName}.internal");
-                    yield return new("server.port", 8080);
-                    yield return new("url.full", $"http://{pod.ServiceName}.internal:8080/{pod.ServiceName}");
                 }
 
                 break;

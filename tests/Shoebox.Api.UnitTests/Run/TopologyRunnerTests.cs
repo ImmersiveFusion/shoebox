@@ -185,57 +185,59 @@ flowchart LR
         }
 
 
-        // Snowglobe's shape: a producer publishes, the consumer never runs, and a
-        // backend infers the missing service from a destination nothing receives.
         private const string WithPhantom = @"
 flowchart LR
   gw[API Gateway] --> orders[Orders API]
   orders --> inv[Inventory API]
-  orders --> q[[orders.created]]
-  q -->|phantom| pay[Payment Service]
-  pay --> ledger[(Ledger DB)]";
+  orders -->|phantom| pay[Payment Service]";
 
         [Test]
-        public void A_Phantom_Produces_No_Telemetry_At_All()
+        public void A_Phantom_Never_Speaks_For_Itself()
         {
             var result = Fire(WithPhantom, 1);
 
-            // Not in served-by, and nothing failed either: a phantom is an
-            // absence, not an error.
+            // It served nothing, because it never reported serving anything. The
+            // caller's span is what names it, and that span belongs to the caller.
             result.ServedBy.Should().NotContain(p => p.StartsWith("payment-service"));
+            result.ServedBy.Should().Contain("orders-api-1");
+
+            // And it is not an error. Every span in this trace is a success, which
+            // is what makes a phantom harder to notice than a failure.
             result.FailedSpanCount.Should().Be(0);
-            result.Hops.Should().NotContain(h => h.To == "pay");
-
-            // And nothing downstream of it either. A consumer that never ran
-            // cannot have called its database.
-            result.ServedBy.Should().NotContain(p => p.StartsWith("ledger-db"));
-
-            // The publish still happened, which is the half that makes the
-            // absence inferable rather than invisible.
-            result.ServedBy.Should().Contain("orders-created-1");
         }
 
         [Test]
-        public void Everything_That_Is_Not_The_Phantom_Emits_Exactly_As_It_Would_Have()
+        public void The_Call_To_A_Phantom_Is_Still_Recorded_By_Whoever_Made_It()
         {
-            // The phantom edge is skipped and nothing else changes. Same diagram
-            // with the phantom edge deleted has to produce the identical run.
+            // Without the caller's span there is nothing naming the phantom at
+            // all, and a backend has nothing to infer from. The asymmetry is the
+            // signal: named by others, silent itself.
             const string withoutTheEdge = @"
 flowchart LR
   gw[API Gateway] --> orders[Orders API]
   orders --> inv[Inventory API]
-  orders --> q[[orders.created]]
-  pay[Payment Service] --> ledger[(Ledger DB)]";
+  pay[Payment Service]";
 
             var withPhantom = Fire(WithPhantom, 1);
             var without = Fire(withoutTheEdge, 1);
 
-            withPhantom.SpanCount.Should().Be(without.SpanCount);
-            withPhantom.ServedBy.Should().BeEquivalentTo(without.ServedBy);
-            withPhantom.ServedBy.Should().Contain(new[]
-            {
-                "api-gateway-1", "orders-api-1", "inventory-api-1", "orders-created-1",
-            });
+            withPhantom.SpanCount.Should().Be(without.SpanCount + 1);
+            withPhantom.Hops.Should().Contain(h => h.To == "pay");
+        }
+
+        [Test]
+        public void Nothing_Downstream_Of_A_Phantom_Happens()
+        {
+            const string diagram = @"
+flowchart LR
+  gw[API Gateway] --> orders[Orders API]
+  orders -->|phantom| pay[Payment Service]
+  pay --> ledger[(Ledger DB)]";
+
+            var result = Fire(diagram, 1);
+
+            // A service that never ran cannot have called its database.
+            result.ServedBy.Should().NotContain(p => p.StartsWith("ledger-db"));
         }
 
     }
