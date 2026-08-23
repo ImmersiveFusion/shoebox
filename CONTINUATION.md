@@ -1,6 +1,7 @@
 # Continuation note
 
-Handoff for a new session. Written 2026-08-22.
+Handoff for a new session. Written 2026-08-22, updated 2026-08-23 after
+running the app for real.
 
 ## Branches in play
 
@@ -9,17 +10,25 @@ Handoff for a new session. Written 2026-08-22.
 | Shoebox | `m:\dobri\IF\repos\shoebox` | `feat/synthetic-mermaid` |
 | IF.Knowledge.Marketing | `m:\dobri\IF\repos\IF.Knowledge.Marketing` | `trout/snowglobe-rename-and-distribution-playbook` |
 
-Both are clean and pushed. The marketing branch was untouched this session; the
-work below is all in Shoebox. The last marketing commit is `0dfc5c8`
+The marketing branch is untouched. The last marketing commit is `0dfc5c8`
 (MKT-SP-121, worker permutation prebaked).
+
+**The local clone paths above are correct only since 2026-08-23.** Before that,
+this repo sat at `m:\dobri\IF\repos\opentelemetry-chaos-sim` with its remote
+still pointing at the pre-rename URL, and the sibling at
+`m:\dobri\IF\repos\opentelemetry-tracegen`. Both directories and both remotes
+were renamed on 2026-08-23. If a note tells you to look in
+`m:\dobri\IF\repos\shoebox` and it is not there, look under the old name
+before assuming the work is lost: everything was on `origin` the whole time.
 
 ## Where Shoebox got to
 
-Last three commits on `feat/synthetic-mermaid`:
+Commits on `feat/synthetic-mermaid`:
 
 - `c8ef44b` Rework the UI into the Mermaid paste box
 - `6fc6263` Put the brand back, and take 145 kB of dead CSS out
 - `9bb8a9e` Style the diagram by role, and fix the layout bug I introduced
+- `52b91e6` Prove it in a browser, and fix what that turned up
 
 The SPA is now a paste box: a textarea, a live mermaid render on a 300 ms
 debounce, a grouped example picker (sixteen prebaked scenarios, pure data in
@@ -68,6 +77,44 @@ cd src/Shoebox.Spa && npx ng build --configuration production   # expect ~432 kB
 dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj   # 25 tests
 ```
 
+Both were re-run on 2026-08-23. The build lands at 428 kB initial and the tests
+are 25 of 25.
+
+**Check `node -v` first.** See the Node row in the drift table below: the Angular
+CLI refuses to start on anything below v24.15.0, and it says so in a message that
+looks nothing like a build error.
+
+To run the whole thing rather than half of it, two processes:
+
+```
+ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5168 \
+  dotnet run --project src/Shoebox.Api --no-launch-profile
+npm --prefix src/Shoebox.Spa start        # 4200, proxied to 5168
+```
+
+`proxy.conf.json` is what makes the second one useful and it is new as of
+2026-08-23. Without it the SPA posts to its own origin and nothing fires.
+
+The API alone can be checked with curl, which is the fastest way to tell an API
+problem from a UI one:
+
+```
+curl -X POST http://localhost:5168/sandbox
+curl -X POST "http://localhost:5168/run?sandboxId=$ID" -H 'Content-Type: application/json' \
+  -d '{"diagram":"flowchart LR\n  api[Orders API] -->|broken: wrong table| db[(SQL Server)]","runIndex":1}'
+```
+
+To drive the page rather than only photograph it, launch Chrome with
+`--headless=new --remote-debugging-port=9222 --user-data-dir=<scratch>` and talk
+to it over the DevTools protocol. Node 24 has a global `WebSocket`, so a forty
+line script is enough: read `http://127.0.0.1:9222/json/list` for the page
+target, `Runtime.evaluate` to click and to read text back, `Page.captureScreenshot`
+for the picture. That is how the run counter and the served-by list were finally
+verified. Two traps in writing one: a real newline inside a regex literal in an
+evaluated expression fails as "Invalid regular expression: missing /", and
+`--user-data-dir` must be outside the repo or Chrome leaves a profile behind in
+the tree.
+
 To actually look at it rather than trusting the compiler -- which is how both real
 bugs this session were found:
 
@@ -82,21 +129,48 @@ Note for probing mermaid directly from `node_modules`: Python's `http.server`
 does not map `.mjs` to a JavaScript MIME type, so the module silently fails to
 import. Map it or the probe will look like a mermaid bug.
 
+## Closed 2026-08-23
+
+- **It has been clicked in a real browser.** API and dev server run together,
+  Chrome driven over the DevTools protocol, fire button clicked twice. The run
+  counter incremented 3 to 4 to 5, the served-by list came back live, and the
+  OTLP status line rendered the unconfigured branch correctly. **The per-instance
+  break works end to end:** on the `broken on #3` example the run that landed on
+  `worker-3` failed and the run that landed on `worker-4` did not, which is the
+  whole point of the feature and had never been observed.
+- **The empty sandbox id in the footer** is guarded. The sentence is hidden until
+  there is an id, rather than rendering `Your sandbox is , and it rides ...`.
+- **`Shoebox.Api.http`** covers the four real endpoints instead of `Example.Api`
+  and a `weatherforecast` route that has not existed for some time.
+- **`src/Shoebox.Spa/README.md`** is a real README instead of the Angular CLI
+  default opening `# ExampleSpa`.
+- **The two `environment.ts` files are deleted.** Nothing imported them and they
+  carried a pre-rename GitHub URL plus hardcoded internal Azure hostnames into a
+  repo being handed to strangers.
+
 ## Open, not done
 
-- **The footer reads "Your sandbox is , and it rides..." with an empty id** when
-  the API is not running, because `createSandbox` never returns and `sandboxId`
-  stays `''`. Cosmetic, pre-existing, visible in every screenshot. Needs a guard.
-- **`README.md` still describes the old chaos-simulator behaviour**, not the paste
-  box. It is stale.
-- **Nothing has been clicked in a real browser.** Everything is verified by build,
-  unit test, and headless screenshot. Fire-one-request has never been exercised
-  against a running API in this session, so the run counter, the served-by list
-  and the OTLP status line are unproven end to end.
+- **The root `README.md` still describes the old chaos-simulator behaviour**, not
+  the paste box. Still stale, and it is the first thing a stranger reads.
+- **The diagram renders small in a tall empty pane.** A six-node LR flow comes out
+  538 by 81 pixels inside a viewer roughly 500 pixels tall, so the labels are
+  around six pixels and most of the panel is background. A design call rather than
+  a bug, but it is the first thing you notice looking at the page.
+- **Nothing copies the SPA build into `src/Shoebox.Api/wwwroot`.** `AddSpaStaticFiles`
+  points at `wwwroot` and `wwwroot` is empty, so outside Development the API serves
+  no front end at all. Another face of "there is no deployment pipeline in this repo".
 - The old `.img/banner.jpg` predates the rename and may still say the old name.
-- **Pre-rename names still in the tree:** `README.md`, `src/Shoebox.Spa/README.md`
-  and `src/Shoebox.Api/Shoebox.Api.http` still carry `ExampleSpa`/`Example.Api`
-  strings. Cosmetic, but they are user-facing in a repo being handed to strangers.
+- **338 MB of dead build output is still on disk:** `src/Example.Spa` (309 MB, only
+  `dist`, `node_modules` and empty `.angular` and `.claude` directories) and
+  `src/Example.Api` (29 MB, only `bin`, `obj` and a `.csproj.user`), plus
+  `src/.vs/Example` and `src/Example.sln.DotSettings.user`. All untracked leftovers
+  of projects that no longer exist in the tree. Removing them was refused by a
+  permission prompt on 2026-08-23, so it is still to do, and this machine has run
+  out of disk before.
+- **The `snowglobe` clone is four commits behind `origin/main`**, so its working
+  tree still has `WHERE-TRACEGEN-RUNS.md` and a stale `tracegen.exe`. The
+  fast-forward was refused by the same prompt. Nothing is lost; it is one
+  `git merge --ff-only origin/main` away.
 
 ## The rename, and where it actually stands
 
@@ -129,16 +203,24 @@ masthead in this app both lean on that, so do not reword them casually.
 ### Canon drifts from the artifact here. Check before you trust.
 
 The spike records **nine** occasions where the written canon disagreed with the
-live repo, three of them inside its own handoff. Verified this session, and the
-spike's "next actions" list is now stale on two counts:
+live repo, three of them inside its own handoff. Call it **eleven** now: the
+2026-08-23 session found that this note's own Node claim was false on the machine
+it was read on, and that the clone paths it gave did not exist because the
+directories had never been renamed locally. Both were found the same way, by
+looking rather than by trusting.
+
+Verified against the live repo, here is where the spike's "next actions" list
+stands:
 
 | Handoff says | Actually |
 |---|---|
-| Item 4: bump Node to >= 24.15.0 | **Done.** v24.19.0 |
+| Item 4: bump Node to >= 24.15.0 | **Not on this machine.** The only Node on PATH is v24.11.1 and `@angular/cli` 22 refuses to start on it. The 2026-08-22 claim of v24.19.0 was true of wherever that session ran, not here. Worked around on 2026-08-23 with a portable Node 24.19.0 unpacked into a scratch directory and put in front of PATH, so the blocker returns the moment you open a fresh shell. |
 | Item 5: .NET 9 to 10, Angular 21 to 22, TS 5.9 to 6.0, then CPM | **Done.** net10.0, Angular 22.1.3, CLI 22.1.5, TS 6.0.3, `Directory.Packages.props` with 18 `PackageVersion` entries |
 | "one csproj" | **Two.** `Shoebox.Api` plus `Shoebox.Api.UnitTests` |
 
-Read the repo before believing any note, including this one.
+Read the repo before believing any note, including this one. Two of the three
+rows above were wrong the last time somebody checked, and the note doing the
+correcting was this file.
 
 ---
 
