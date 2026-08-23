@@ -13,6 +13,13 @@
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <!-- The one prerelease left, and it is a decision rather than an oversight.
+         The other two prereleases this project carried, Instrumentation.SqlClient
+         and Instrumentation.StackExchangeRedis, left with the SQL and Redis
+         rip-out. This one does not go away with them: process metrics are the
+         only thing reporting on the host the simulation runs on. Either keep
+         riding the rc, or drop process instrumentation and say so. Do not
+         quietly swap it for a stable package that measures something else. -->
     <PackageVersion Include="OpenTelemetry.Instrumentation.Process" Version="1.17.0-rc.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
     <PackageVersion Include="Polly" Version="8.7.0" />
