@@ -57,12 +57,40 @@ Each simulated pod gets its own `TracerProvider` with a Resource carrying
 
 ## Where the telemetry goes
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` to any OTLP backend: Jaeger, Tempo, Grafana,
-SigNoz, a Collector, or anything else that speaks OTLP. The UI tells you whether
-one is configured, so a user who sees no traces can tell an unset endpoint from a
-broken diagram.
+Shoebox reads the standard OTLP variables, the same ones and in the same
+precedence as [Snowglobe](https://github.com/ImmersiveFusion/snowglobe):
 
-Runs still execute with nothing configured. They just do not go anywhere.
+| Variable | Effect |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Where to export. A URL, or a bare `host:port`, which is assumed to be TLS |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The same, and it wins over the general one |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `key=value` pairs, comma-separated |
+
+Jaeger, Tempo, Grafana, SigNoz, a Collector, or anything else that speaks OTLP.
+Runs still execute with nothing configured; they just do not go anywhere, and the
+UI says so, because a person seeing no traces needs to tell an unset endpoint from
+a broken diagram.
+
+### Letting a visitor send traces to their own backend
+
+Snowglobe takes `-endpoint` and `-headers` on the command line. A hosted Shoebox
+has no command line, and the person looking at the page cannot set an environment
+variable on someone else's server, so the same two knobs appear in the UI: a
+destination and its headers, in the same two formats. Whatever is typed there wins
+over the server's own configuration for that run, exactly as a flag beats the
+environment in Snowglobe.
+
+They are kept in that browser, sent only with a run, never written to the
+shareable link, and never stored on the server.
+
+**This is off by default anywhere public**, and that asymmetry is deliberate.
+Snowglobe runs on your machine and points where you say; the only person a bad
+endpoint can hurt is you. A hosted Shoebox is a stranger asking our server to open
+a connection somewhere, which is a server-side request forgery primitive if it is
+left open. So it is on in Development, where the operator is the visitor, and off
+otherwise unless `SHOEBOX_ALLOW_CLIENT_OTLP=true` says otherwise. Even then,
+endpoints resolving to loopback, link-local or private ranges are refused, the
+cloud metadata service among them.
 
 ## Running it
 

@@ -38,7 +38,18 @@ export interface RunResult {
 export interface OtlpStatus {
   configured: boolean;
   endpoint: string | null;
+  /** Whether this instance lets a visitor name their own destination. */
+  clientConfigurable: boolean;
   hint: string;
+}
+
+/**
+ * Where a run sends its telemetry, in the same two pieces and the same two formats
+ * Snowglobe takes as -endpoint and -headers.
+ */
+export interface OtlpOverride {
+  endpoint: string;
+  headers: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -50,10 +61,15 @@ export class ShoeboxService {
   }
 
   /** Fires exactly one request. Nothing moves unless the user asks. */
-  run(diagram: string, runIndex: number, sandboxId: string): Observable<RunResult> {
+  run(diagram: string, runIndex: number, sandboxId: string, otlp?: OtlpOverride): Observable<RunResult> {
+    // Sent in the body rather than the query string, and for the same reason the
+    // diagram lives in the URL fragment: headers can carry an API key, and a query
+    // string reaches server logs, CDN logs and Referer headers.
     return this.http.post<RunResult>(`/run?sandboxId=${encodeURIComponent(sandboxId)}`, {
       diagram,
       runIndex,
+      endpoint: otlp?.endpoint?.trim() || null,
+      headers: otlp?.headers?.trim() || null,
     });
   }
 
