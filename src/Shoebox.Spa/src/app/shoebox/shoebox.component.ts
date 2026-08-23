@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, ViewChild, inject, signal } from '@angular/core';
+import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal } from '@angular/core';
 import { Subject, debounceTime } from 'rxjs';
 import { EXAMPLES, DEFAULT_EXAMPLE, Example } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
@@ -34,6 +34,13 @@ export class ShoeboxComponent implements OnInit {
 
   runIndex = 1;
   sandboxId = '';
+
+  /**
+   * Which panel, if any, is filling the screen. Both panes are cramped by
+   * default: a diagram of a real system does not fit in half a page, and neither
+   * does the text that produced it.
+   */
+  readonly expanded = signal<'editor' | 'viewer' | null>(null);
 
   /**
    * Mermaid is roughly a quarter of a megabyte, so it is loaded on demand rather
@@ -117,6 +124,38 @@ export class ShoeboxComponent implements OnInit {
   resetRuns(): void {
     this.runIndex = 1;
     this.result.set(null);
+  }
+
+  /**
+   * Real full screen when the browser grants it, a fixed overlay when it does
+   * not. Nothing here depends on the Fullscreen API succeeding: the `is-expanded`
+   * class does the whole job on its own, and `requestFullscreen` only removes the
+   * browser chrome on top of that. It needs a real user gesture, so it is
+   * expected to be refused when the click was synthetic.
+   */
+  toggleExpand(which: 'editor' | 'viewer', host: HTMLElement): void {
+    if (this.expanded() === which) {
+      this.collapse();
+      return;
+    }
+    this.expanded.set(which);
+    void host.requestFullscreen?.().catch(() => undefined);
+  }
+
+  collapse(): void {
+    this.expanded.set(null);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.expanded()) this.collapse();
+  }
+
+  /** Escape inside native full screen is eaten by the browser, so follow its lead. */
+  @HostListener('document:fullscreenchange')
+  onFullscreenChange(): void {
+    if (!document.fullscreenElement && this.expanded()) this.expanded.set(null);
   }
 
   private async refresh(): Promise<void> {

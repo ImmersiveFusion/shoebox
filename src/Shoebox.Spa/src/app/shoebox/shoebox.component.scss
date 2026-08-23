@@ -51,7 +51,9 @@ textarea {
 
 .split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  // Not an even split. The text is fixed-width monospace and stops needing room
+  // at some point; the picture never does, because it is the thing being read.
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   gap: 1rem;
 
   @media (max-width: 900px) { grid-template-columns: 1fr; }
@@ -74,7 +76,67 @@ textarea {
   // Angular has stamped its encapsulation attributes, so a plain scoped selector
   // never matches it. :global is not an Angular selector at all and silently
   // matched nothing, which left the SVG unconstrained.
-  ::ng-deep svg { max-width: 100%; height: auto; display: block; }
+  //
+  // width, not just max-width. max-width alone only ever caps, so a wide and flat
+  // flowchart rendered at its natural 540px sat marooned in a pane twice that,
+  // with six-pixel labels. The !important is not decoration: mermaid writes an
+  // inline max-width of the natural size onto the SVG element, and an inline
+  // style cannot be beaten any other way. preserveAspectRatio does the rest, so
+  // the graph fits and centers rather than stretching.
+  ::ng-deep svg {
+    width: 100%;
+    max-width: none !important;
+    height: auto;
+    max-height: 100%;
+    display: block;
+  }
+}
+
+.panelhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+
+  label { margin-bottom: 0.5rem; }
+}
+
+button.expand {
+  flex: none;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+}
+
+// Full screen without depending on the Fullscreen API. When the browser grants
+// real full screen this is what styles the element inside it; when it refuses,
+// this is the whole feature. Escape closes either one.
+.panel.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  margin: 0;
+  border-radius: 0;
+  padding: 1rem 1.25rem;
+  background: var(--navy);
+  display: flex;
+  flex-direction: column;
+
+  .panelhead { flex: none; }
+  .cheatsheet { flex: none; }
+
+  // min-height: 0, or the flex child refuses to shrink below its content and the
+  // panel overflows the viewport instead of the content fitting inside it.
+  textarea, .render { flex: 1 1 auto; min-height: 0; }
+  textarea { resize: none; }
 }
 
 .controls {

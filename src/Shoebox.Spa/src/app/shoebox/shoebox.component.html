@@ -26,8 +26,15 @@
 
   <div class="split">
 
-    <section class="panel editor">
-      <label for="diagram">The diagram is the whole state</label>
+    <section class="panel editor" #editorPanel [class.is-expanded]="expanded() === 'editor'">
+      <div class="panelhead">
+        <label for="diagram">The diagram is the whole state</label>
+        <button type="button" class="expand"
+                (click)="toggleExpand('editor', editorPanel)"
+                [attr.aria-pressed]="expanded() === 'editor'">
+          {{ expanded() === 'editor' ? 'Exit full screen' : 'Full screen' }}
+        </button>
+      </div>
       <textarea id="diagram"
                 spellcheck="false"
                 [(ngModel)]="diagram"
@@ -56,7 +63,15 @@
       </details>
     </section>
 
-    <section class="panel viewer">
+    <section class="panel viewer" #viewerPanel [class.is-expanded]="expanded() === 'viewer'">
+      <div class="panelhead">
+        <label>What it looks like</label>
+        <button type="button" class="expand"
+                (click)="toggleExpand('viewer', viewerPanel)"
+                [attr.aria-pressed]="expanded() === 'viewer'">
+          {{ expanded() === 'viewer' ? 'Exit full screen' : 'Full screen' }}
+        </button>
+      </div>
       <div class="render" #render></div>
       <p class="error" *ngIf="renderError()">
         Diagram not renderable yet: {{ renderError() }}
