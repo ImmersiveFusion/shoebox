@@ -19,6 +19,8 @@
           <button type="button" class="chip"
                   *ngFor="let example of examplesIn(group)"
                   [class.on]="selectedExampleId === example.id"
+                [class.will-fail]="outcomeOf(example) === 'always'"
+                [class.may-fail]="outcomeOf(example) === 'sometimes'"
                   [attr.aria-pressed]="selectedExampleId === example.id"
                   [title]="example.description"
                   (click)="loadExample(example.id)">{{ example.label }}</button>

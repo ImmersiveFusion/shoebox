@@ -46,6 +46,21 @@ const WORKER = (rabbitLabel: string) => `flowchart LR
  *
  * Order here is the order they render, and adding a group is a line in this list.
  */
+/** What firing this example will do. Read off the diagram, never hand-set. */
+export type Outcome = 'healthy' | 'always' | 'sometimes';
+
+/**
+ * The diagram is the whole state, so it is also the whole truth about the
+ * outcome. Deriving this rather than storing it means a new example cannot claim
+ * to break something it does not break, which is exactly the drift that left
+ * "cache miss" and "expired key" drawing a plain healthy roundtrip.
+ */
+export function outcomeOf(example: Example): Outcome {
+  if (/broken on #/.test(example.diagram)) return 'sometimes';
+  if (/\|\s*broken/.test(example.diagram)) return 'always';
+  return 'healthy';
+}
+
 export const GROUPS = ['Databases', 'Workflows', 'Distributed systems'] as const;
 
 export const EXAMPLES: readonly Example[] = [

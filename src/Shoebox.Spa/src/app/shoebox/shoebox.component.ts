@@ -1,6 +1,6 @@
 import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal } from '@angular/core';
 import { Subject, debounceTime } from 'rxjs';
-import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example } from './examples';
+import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example, Outcome, outcomeOf } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import { URL_LENGTH_WARNING, readDiagramFromUrl, writeDiagramToUrl } from './diagram-url';
 import { decorate } from './diagram-style';
@@ -110,6 +110,10 @@ export class ShoeboxComponent implements OnInit {
     this.runIndex = 1;
     this.result.set(null);
     void this.refresh();
+  }
+
+  outcomeOf(example: Example): Outcome {
+    return outcomeOf(example);
   }
 
   examplesIn(group: string): readonly Example[] {

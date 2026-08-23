@@ -131,8 +131,51 @@ button.chip {
 
   &:hover { color: var(--teal-bright); border-color: var(--teal); }
 
-  &.on {
+  // What this example will do, encoded twice: once in colour, once in the
+  // direction of the hatching. Colour alone fails roughly one man in twelve, and
+  // the two hues in play here are the pair that fails first, so the pattern is
+  // the load-bearing half and the colour is the reinforcement.
+  //
+  // Horizontal is calm and reads as level. Crosshatch is the only one where the
+  // lines actually cross, which is what a struck-through, cancelled thing looks
+  // like. A single diagonal sits between the two, for the ones that fail on some
+  // runs and not others.
+  //
+  // Kept faint. These are behind label text that still has to pass contrast.
+  &.will-fail {
+    border-color: rgba(255, 45, 111, 0.45);
+    background-color: rgba(255, 45, 111, 0.06);
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255, 45, 111, 0.22) 0 1px, transparent 1px 7px),
+      repeating-linear-gradient(-45deg, rgba(255, 45, 111, 0.22) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #ff86ac; border-color: var(--magenta); }
+  }
+
+  &.may-fail {
+    border-color: rgba(255, 176, 90, 0.45);
+    background-color: rgba(255, 176, 90, 0.06);
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255, 176, 90, 0.26) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #ffc98a; border-color: rgba(255, 176, 90, 0.9); }
+  }
+
+  // Everything else runs clean, and says so the same way.
+  &:not(.will-fail):not(.may-fail) {
+    background-image:
+      repeating-linear-gradient(0deg, rgba(47, 212, 196, 0.20) 0 1px, transparent 1px 7px);
+  }
+
+  // Selected wins outright. The solid fill already says which one is loaded, and
+  // a pattern showing through it only muddies the one chip that has to be
+  // unmistakable.
+  &.on,
+  &.on.will-fail,
+  &.on.may-fail {
     color: #04121a;
+    background-color: transparent;
+    background-image: none;
     background: linear-gradient(135deg, var(--teal-bright), var(--teal));
     border-color: transparent;
     box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 4px 14px rgba(47, 212, 196, 0.28);
