@@ -149,15 +149,24 @@ public sealed class TopologyRunner
 
             activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
             activity.SetTag("service.instance.id", $"{pod.ServiceName}-{instance}");
+            // A consumer is a messaging span and only a messaging span. It was
+            // also carrying http.request.method, which says this service was
+            // reached over HTTP when it was reached off a queue. Anything reading
+            // the telemetry to work out how a service is called gets two
+            // contradictory answers, and the transport is the thing it is trying
+            // to establish.
             if (via is { } delivery)
             {
+                activity.SetTag("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
                 foreach (var (k, v) in MessagingTags(delivery.Queue, "process", "process", delivery.MessageId))
                 {
                     activity.SetTag(k, v);
                 }
             }
-
-            foreach (var (k, v) in SemanticTags(pod, kind)) activity.SetTag(k, v);
+            else
+            {
+                foreach (var (k, v) in SemanticTags(pod, kind)) activity.SetTag(k, v);
+            }
         }
 
         foreach (var call in graph.From(pod.Id))
@@ -207,10 +216,22 @@ public sealed class TopologyRunner
             // whoever published and the receive to whoever consumed; nothing
             // emits on behalf of the queue itself, because in a real system
             // nothing does.
-            if (target.Kind == PodKind.Queue)
+            // Producer semantics only when the diagram models the far side.
+            //
+            // A queue drawn with nothing after it is the end of what was drawn,
+            // not a statement that nothing consumes it. Publishing to it with no
+            // receive says the second thing, and anything watching for unconsumed
+            // destinations then reports every terminal queue in every diagram as a
+            // phantom. That is how RabbitMQ became one in an example whose lesson
+            // was about a broken worker.
+            //
+            // "Nothing consumes this" is a claim, and the only thing entitled to
+            // make it is the phantom marker, where somebody said so on purpose.
+            var consumers = graph.From(target.Id).ToList();
+            if (target.Kind == PodKind.Queue && consumers.Count > 0)
             {
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                PublishAndDeliver(graph, pod, target, activity, state, depth, instance);
+                PublishAndDeliver(graph, pod, target, consumers, activity, state, depth, instance);
                 continue;
             }
 
@@ -231,7 +252,7 @@ public sealed class TopologyRunner
     /// it, and the missing consumer can be inferred precisely because the
     /// destination is on both halves when things are working.
     /// </summary>
-    private void PublishAndDeliver(Graph graph, Pod producer, Pod queue, Activity? parent, RunState state, int depth, int instance)
+    private void PublishAndDeliver(Graph graph, Pod producer, Pod queue, IReadOnlyList<Call> consumers, Activity? parent, RunState state, int depth, int instance)
     {
         // Deterministic: the same diagram and run index produce the same id, so a
         // shared link is still a runnable repro.
@@ -256,7 +277,7 @@ public sealed class TopologyRunner
             foreach (var (k, v) in MessagingTags(queue, "publish", "send", messageId)) publish.SetTag(k, v);
         }
 
-        foreach (var call in graph.From(queue.Id))
+        foreach (var call in consumers)
         {
             var consumer = graph.ById(call.ToId);
             if (consumer is null) continue;
