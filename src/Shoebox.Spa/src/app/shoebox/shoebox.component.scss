@@ -110,9 +110,19 @@ button.chip {
   @media (max-width: 900px) { grid-template-columns: 1fr; }
 }
 
+// Graph paper. The pane is where you look at a system you just sketched, so it
+// should read as the surface you sketched it on. Faint enough that the diagram
+// stays the loudest thing: the grid is at 5% and the diagram's own strokes are
+// full teal.
+//
+// Layer order is paint order, first on top, so the glow sits over the grid and
+// the grid over the panel fill. The 32px pitch is arbitrary but matched to the
+// node heights, which stops the boxes looking like they float between rules.
 .viewer {
   background:
     radial-gradient(520px 240px at 50% 0%, rgba(47, 212, 196, 0.10), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
     linear-gradient(180deg, rgba(18, 32, 47, 0.92), rgba(11, 22, 34, 0.92));
 }
 
