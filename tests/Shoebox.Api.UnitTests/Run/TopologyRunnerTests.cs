@@ -185,59 +185,69 @@ flowchart LR
         }
 
 
+        // A phantom is asynchronous or it is nothing. A synchronous callee that is
+        // not there refuses the connection, and a refused connection is an error
+        // span: evidence, not an absence.
         private const string WithPhantom = @"
 flowchart LR
   gw[API Gateway] --> orders[Orders API]
   orders --> inv[Inventory API]
-  orders -->|phantom| pay[Payment Service]";
+  orders --> q[[orders.created]]
+  q -->|phantom| pay[Payment Service]";
 
         [Test]
-        public void A_Phantom_Never_Speaks_For_Itself()
+        public void A_Dead_Consumer_Leaves_No_Trace_Of_Itself()
         {
             var result = Fire(WithPhantom, 1);
 
-            // It served nothing, because it never reported serving anything. The
-            // caller's span is what names it, and that span belongs to the caller.
             result.ServedBy.Should().NotContain(p => p.StartsWith("payment-service"));
-            result.ServedBy.Should().Contain("orders-api-1");
+            result.Hops.Should().NotContain(h => h.To == "pay");
 
-            // And it is not an error. Every span in this trace is a success, which
-            // is what makes a phantom harder to notice than a failure.
+            // And nothing failed. That is the whole difficulty: a queue nobody
+            // drains looks exactly like a queue somebody drains, from the
+            // producer's side.
             result.FailedSpanCount.Should().Be(0);
         }
 
         [Test]
-        public void The_Call_To_A_Phantom_Is_Still_Recorded_By_Whoever_Made_It()
+        public void The_Publish_Still_Happens_Which_Is_What_Makes_It_Inferable()
         {
-            // Without the caller's span there is nothing naming the phantom at
-            // all, and a backend has nothing to infer from. The asymmetry is the
-            // signal: named by others, silent itself.
-            const string withoutTheEdge = @"
-flowchart LR
-  gw[API Gateway] --> orders[Orders API]
-  orders --> inv[Inventory API]
-  pay[Payment Service]";
+            // Without the producer's span there is no destination on record and
+            // nothing to notice the absence of. The pairing is the signal.
+            var result = Fire(WithPhantom, 1);
 
-            var withPhantom = Fire(WithPhantom, 1);
-            var without = Fire(withoutTheEdge, 1);
-
-            withPhantom.SpanCount.Should().Be(without.SpanCount + 1);
-            withPhantom.Hops.Should().Contain(h => h.To == "pay");
+            result.Hops.Should().Contain(h => h.To == "q");
+            result.ServedBy.Should().Contain("orders-api-1");
         }
 
         [Test]
-        public void Nothing_Downstream_Of_A_Phantom_Happens()
+        public void Nothing_Downstream_Of_A_Dead_Consumer_Happens()
         {
             const string diagram = @"
 flowchart LR
-  gw[API Gateway] --> orders[Orders API]
-  orders -->|phantom| pay[Payment Service]
+  orders[Orders API] --> q[[orders.created]]
+  q -->|phantom| pay[Payment Service]
   pay --> ledger[(Ledger DB)]";
 
             var result = Fire(diagram, 1);
 
-            // A service that never ran cannot have called its database.
+            // A consumer that never ran cannot have called its database.
             result.ServedBy.Should().NotContain(p => p.StartsWith("ledger-db"));
+        }
+
+        [Test]
+        public void A_Phantom_On_A_Direct_Call_Is_Refused_And_Says_Why()
+        {
+            const string diagram = @"
+flowchart LR
+  orders[Orders API] -->|phantom| pay[Payment Service]";
+
+            var result = Fire(diagram, 1);
+
+            // It runs as an ordinary call rather than silently doing nothing, and
+            // the note explains that a phantom needs a queue to be a phantom.
+            result.ServedBy.Should().Contain("payment-service-1");
+            result.Notes.Should().Contain(n => n.Contains("queue"));
         }
 
     }

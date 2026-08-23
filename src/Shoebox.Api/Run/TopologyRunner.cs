@@ -186,10 +186,16 @@ public sealed class TopologyRunner
             // version had the caller emit a client span naming the phantom, and
             // that is precisely backwards: the name appearing anywhere is what a
             // phantom is defined by not doing.
+            // Only reachable on a direct edge, where it is meaningless: a
+            // synchronous callee that is not there refuses the connection, and a
+            // refused connection is an error span, which is evidence. Phantoms
+            // are the absence of evidence, so they only exist behind a queue.
+            // Handled properly in PublishAndDeliver.
             if (call.Phantom)
             {
+                state.Note($"phantom on a direct call to {target.ServiceName} is ignored: a service that is not there would refuse the connection and the trace would show the error. Put it behind a queue.");
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                EmitCallToNothing(pod, target, activity, state, instance);
+                Visit(graph, target, activity, state, depth + 1);
                 continue;
             }
 
@@ -280,6 +286,16 @@ public sealed class TopologyRunner
         yield return new("messaging.system", "rabbitmq");
         yield return new("messaging.destination.name", queue.ServiceName);
 
+        // Deprecated since semconv 1.17, emitted anyway and deliberately.
+        //
+        // Dual-emission is the documented way to cross a rename, and this rename
+        // is not finished in the wild: real consumers still read the old key, so a
+        // producer that only speaks the new one pairs with nothing and its queue
+        // looks unconsumed to anything that has not caught up. Emitting both costs
+        // one attribute and is correct for either vintage. It comes out when the
+        // readers have moved.
+        yield return new("messaging.destination", queue.ServiceName);
+
         // operation.name is a free string and takes the system's own word.
         // operation.type is an enumeration and takes exactly one of create, send,
         // receive, process, settle. "publish" was in there and is not a member of
@@ -293,57 +309,6 @@ public sealed class TopologyRunner
         // the message level, which is the correlation the spec actually defines.
         // Deterministic, because a shared link has to replay identically.
         yield return new("messaging.message.id", messageId);
-    }
-
-    /// <summary>
-    /// The caller's side of a call to something that never reports.
-    ///
-    /// This is the whole of a phantom and it is worth being exact about what is
-    /// and is not emitted. The caller emits its own CLIENT span, under its own
-    /// service.name, naming the far end in server.address exactly as it would for
-    /// any outbound call. The far end emits nothing, and nothing downstream of it
-    /// happens. No span carries the phantom's service.name, because it has none:
-    /// it has never introduced itself.
-    ///
-    /// That asymmetry is what a backend keys on. A peer that is named by other
-    /// people's spans and never speaks for itself is a service you did not know
-    /// you had, which is Snowglobe's definition of the word.
-    ///
-    /// The name goes in server.address unchanged. An earlier attempt appended
-    /// ".internal" to it, which invented a hostname nothing could ever emit
-    /// under, and turned every ordinary service in the diagram into a phantom.
-    /// </summary>
-    private void EmitCallToNothing(Pod from, Pod to, Activity? parent, RunState state, int instance)
-    {
-        var source = _pool.For(from.ServiceName, instance);
-        using var activity = source.StartActivity(
-            $"{from.ServiceName} -> {to.ServiceName}",
-            ActivityKind.Client,
-            parent?.Context ?? default,
-            startTime: state.Clock);
-
-        state.Clock = state.Clock.AddMilliseconds(to.DefaultLatencyMs);
-        state.Phantoms.Add(to.ServiceName);
-        if (activity is null) return;
-
-        activity.SetEndTime(state.Clock.UtcDateTime);
-        state.SpanCount++;
-
-        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
-        // server.address and nothing that would extend the key past it.
-        //
-        // A consumer of this builds its dependency node from the host and then
-        // appends further levels, server.port among them, while phantom detection
-        // keys on the host alone. Emitting a port produced two different keys for
-        // the same peer: the dependency node under host-port, the phantom under
-        // host, so instead of the drawn node being promoted a second one appeared
-        // beside it.
-        //
-        // The spec calls server.port required on client spans and it is a real
-        // omission. It cannot go back until the two keys are derived the same way,
-        // which is a fix on the consuming side, not here.
-        activity.SetTag("http.request.method", "POST");
-        activity.SetTag("server.address", to.ServiceName);
     }
 
     /// <summary>
