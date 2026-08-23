@@ -1,13 +1,43 @@
 .shoebox {
-  // Wide, but not edge to edge. The diagram is the reason to use the screen, so
-  // the shell gets out of its way; prose keeps its own measure below, because a
-  // 1600px line of text is unreadable no matter how much monitor there is.
+  // A box seen from directly above. The four wall faces are one conic gradient:
+  // sectors cut at the diagonals give exactly four trapezoids, which is what the
+  // inside of a box looks like from straight overhead. The floor sits on top of
+  // the middle and hides the part that would be nonsense.
+  //
+  // Light comes from the top of the screen, so the far wall catches it and the
+  // near wall is in shadow. Getting that backwards makes it read as a pyramid.
   max-width: min(96vw, 1680px);
-  margin: 0 auto;
-  padding: 2rem 1.25rem 4rem;
+  margin: 1.5rem auto 3rem;
+  padding: 26px;
+  border-radius: 16px;
   color: var(--ink);
   font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  background: conic-gradient(
+    from 45deg,
+    #16293c 0deg 90deg,
+    #0d1b28 90deg 180deg,
+    #16293c 180deg 270deg,
+    #20374d 270deg 360deg
+  );
+
+  box-shadow:
+    0 1px 0 rgba(93, 242, 226, 0.10) inset,
+    0 34px 64px rgba(0, 0, 0, 0.55);
 }
+
+// The bottom of the box. Everything rests on this, and the walls cast onto it.
+.box-floor {
+  border-radius: 6px;
+  padding: 2rem 1.5rem 3rem;
+  background: linear-gradient(180deg, #0a1521, #070f18);
+  box-shadow:
+    0 28px 42px -28px rgba(0, 0, 0, 0.9) inset,
+    0 -20px 32px -28px rgba(0, 0, 0, 0.65) inset,
+    24px 0 36px -28px rgba(0, 0, 0, 0.65) inset,
+    -24px 0 36px -28px rgba(0, 0, 0, 0.65) inset;
+}
+
 
 .masthead {
   margin-bottom: 1.5rem;
@@ -24,7 +54,9 @@
   border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
-  box-shadow: 0 1px 0 rgba(93, 242, 226, 0.06) inset, 0 12px 28px rgba(0, 0, 0, 0.28);
+  // No drop shadow. These sit on the floor of the box, and anything that casts
+  // down the page reads as floating above it instead of resting in it.
+  box-shadow: 0 1px 0 rgba(93, 242, 226, 0.06) inset;
 }
 
 label {
@@ -248,16 +280,45 @@ button {
   cursor: pointer;
 }
 
-.fire {
+// One request per press, and you can wind it back to the start. A transport is
+// the honest control for that, and it says "nothing moves until you press it"
+// better than a word does.
+button.transport {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+
+  svg { width: 20px; height: 20px; fill: currentColor; }
+
+  &:active { transform: translateY(0) scale(0.96); }
+}
+
+button.transport.play {
   background: linear-gradient(135deg, var(--teal-bright), var(--teal));
   color: #04121a;
   box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 6px 20px rgba(47, 212, 196, 0.28);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
 
-  &:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.5), 0 10px 26px rgba(47, 212, 196, 0.38); }
-  &:active { transform: translateY(0); }
+  // The play triangle is optically off-centre in its own box, so nudge it back.
+  svg { margin-left: 2px; }
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.5), 0 10px 26px rgba(47, 212, 196, 0.38);
+  }
 }
-.reset { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+button.transport.rewind {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+}
 .runcount { color: var(--muted); }
 .otlp { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
 
