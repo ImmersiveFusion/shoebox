@@ -111,15 +111,14 @@ export const EXAMPLES: readonly Example[] = [
   { id: 'worker-broken', group: 'Workflows', label: 'Work queue, publish fails',
     description: 'Every worker reaches the API and none can publish. The diff is one label',
     diagram: WORKER('-->|broken: connection refused|') },
-  { id: 'phantom-service', group: 'Distributed systems', label: 'A service that never answers',
-    description: 'Nothing fails and nothing is red. One service is in every span except its own',
+  { id: 'phantom-service', group: 'Distributed systems', label: 'A consumer that never runs',
+    description: 'Nothing fails. Orders publishes and nothing ever receives, which is how a backend infers a service nobody knew about',
     diagram: `flowchart LR
   gw[API Gateway] --> orders[Orders API]
   orders --> inv[Inventory API]
-  orders --> pay[Payments API]
-  pay --> ledger[(Ledger DB)]
-  pay --> cache((Rates Cache))
-  orders -->|phantom| audit[Audit Service]` },
+  orders --> q[[orders.created]]
+  q -->|phantom| pay[Payment Service]
+  pay --> ledger[(Ledger DB)]` },
 
   { id: 'worker-broken-one', group: 'Distributed systems', label: 'Fails one run in five',
     description: 'Five workers, one of them broken. Four runs look perfect and the fifth does not',

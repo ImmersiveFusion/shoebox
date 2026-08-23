@@ -98,7 +98,7 @@ public sealed class TopologyRunner
 
         var named = string.Join(", ", state.Phantoms.Distinct());
         return graph.Notes
-            .Append($"{named} never emitted a span of its own. Everything this trace knows about it, it learned from the services that called it.")
+            .Append($"Nothing consumed what was published on this run. {named} never ran, so the trace has a publish with no matching receive and no span anywhere carries its name. That gap is what a backend reads as a phantom service.")
             .ToList();
     }
 
@@ -154,10 +154,24 @@ public sealed class TopologyRunner
             // Drawn but never called. No hop, no span, no trace of it at all,
             // which is exactly the point: nothing arrives to tell you it is
             // missing, so the only way to notice is to compare the two panels.
+            // A dead consumer, which is what Snowglobe means by a phantom:
+            // "services you didn't know you had: dead consumers, so the platform
+            // infers the missing services from the topology".
+            //
+            // Nothing here emits and nothing emits about it. What makes it
+            // inferable is on the other side of the queue: the producer publishes
+            // normally, with messaging.destination.name on its span, and no
+            // receive ever correlates to it. A backend can tell something ought to
+            // be consuming that destination. The trace can only show you that it
+            // never did.
+            //
+            // Which is why skipping is the whole implementation. An earlier
+            // version had the caller emit a client span naming the phantom, and
+            // that is precisely backwards: the name appearing anywhere is what a
+            // phantom is defined by not doing.
             if (call.Phantom)
             {
-                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                EmitPhantomCall(pod, target, activity, state, instance);
+                state.Phantoms.Add(target.ServiceName);
                 continue;
             }
 
@@ -166,42 +180,6 @@ public sealed class TopologyRunner
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
-    }
-
-    /// <summary>
-    /// A call to something that never speaks for itself.
-    ///
-    /// The caller emits its client span like any other call, so the service is
-    /// named all over the trace: peer.service, the span name, the semantic
-    /// attributes for whatever kind of thing it is. What never arrives is a span
-    /// from the service itself, and nothing downstream of it happens either.
-    ///
-    /// That is what a phantom is. Anything building a service map out of traces
-    /// will draw this node, because other people's spans insist it exists, and it
-    /// has never emitted a byte of telemetry in its life. Nothing is marked red
-    /// and no call failed: every span in the trace is a success. The only
-    /// evidence is an absence, which is why it is the hardest of these to see and
-    /// the one most worth having an example for.
-    /// </summary>
-    private void EmitPhantomCall(Pod from, Pod to, Activity? parent, RunState state, int instance)
-    {
-        var source = _pool.For(from.ServiceName, instance);
-        using var activity = source.StartActivity(
-            $"{from.ServiceName} -> {to.ServiceName}",
-            ActivityKind.Client,
-            parent?.Context ?? default,
-            startTime: state.Clock);
-
-        state.Clock = state.Clock.AddMilliseconds(to.DefaultLatencyMs);
-        state.Phantoms.Add(to.ServiceName);
-        if (activity is null) return;
-
-        activity.SetEndTime(state.Clock.UtcDateTime);
-        state.SpanCount++;
-
-        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
-        activity.SetTag("peer.service", to.ServiceName);
-        foreach (var (k, v) in SemanticTags(to)) activity.SetTag(k, v);
     }
 
     /// <summary>

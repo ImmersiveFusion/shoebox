@@ -46,14 +46,22 @@ semantic conventions, so nothing new has to be learned.
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
-| `a -->\|phantom\| b` | b is called, and never emits a span of its own |
+| `q -->\|phantom\| b` | b never runs, so nothing consumes what q published |
 
-**A phantom is not a failure.** `-->|broken|` produces a span with an error on
-it, which is evidence. `-->|phantom|` produces a trace where nothing failed, every
-span is green, and one service appears only in other services' spans because it has
-never emitted one of its own. Anything drawing a service map from traces will map
-it anyway, on the say-so of its neighbours. The only evidence is an absence, which
-is why it gets its own word.
+**A phantom is a dead consumer**, the same thing
+[Snowglobe](https://github.com/ImmersiveFusion/snowglobe) means by it: *services you
+did not know you had, so the platform infers the missing ones from the topology*.
+
+It is not a failure. `-->|broken|` leaves a span with an error on it, which is
+evidence. `-->|phantom|` leaves nothing: no span from that service, no span naming
+it, no entry in served-by, and nothing downstream of it either. Every span in the
+trace is green.
+
+What makes it findable at all is the half that still happens. The producer
+publishes normally and its span carries `messaging.destination.name`, and no
+receive ever correlates to it. A backend can tell something ought to be consuming
+that destination; the trace can only show you that nothing did. Put the consumer
+back and the phantom disappears, which is the point.
 
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.

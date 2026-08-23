@@ -184,5 +184,59 @@ flowchart LR
             Activity.Current.Should().Be(ambient, "the ambient activity has to be put back");
         }
 
+
+        // Snowglobe's shape: a producer publishes, the consumer never runs, and a
+        // backend infers the missing service from a destination nothing receives.
+        private const string WithPhantom = @"
+flowchart LR
+  gw[API Gateway] --> orders[Orders API]
+  orders --> inv[Inventory API]
+  orders --> q[[orders.created]]
+  q -->|phantom| pay[Payment Service]
+  pay --> ledger[(Ledger DB)]";
+
+        [Test]
+        public void A_Phantom_Produces_No_Telemetry_At_All()
+        {
+            var result = Fire(WithPhantom, 1);
+
+            // Not in served-by, and nothing failed either: a phantom is an
+            // absence, not an error.
+            result.ServedBy.Should().NotContain(p => p.StartsWith("payment-service"));
+            result.FailedSpanCount.Should().Be(0);
+            result.Hops.Should().NotContain(h => h.To == "pay");
+
+            // And nothing downstream of it either. A consumer that never ran
+            // cannot have called its database.
+            result.ServedBy.Should().NotContain(p => p.StartsWith("ledger-db"));
+
+            // The publish still happened, which is the half that makes the
+            // absence inferable rather than invisible.
+            result.ServedBy.Should().Contain("orders-created-1");
+        }
+
+        [Test]
+        public void Everything_That_Is_Not_The_Phantom_Emits_Exactly_As_It_Would_Have()
+        {
+            // The phantom edge is skipped and nothing else changes. Same diagram
+            // with the phantom edge deleted has to produce the identical run.
+            const string withoutTheEdge = @"
+flowchart LR
+  gw[API Gateway] --> orders[Orders API]
+  orders --> inv[Inventory API]
+  orders --> q[[orders.created]]
+  pay[Payment Service] --> ledger[(Ledger DB)]";
+
+            var withPhantom = Fire(WithPhantom, 1);
+            var without = Fire(withoutTheEdge, 1);
+
+            withPhantom.SpanCount.Should().Be(without.SpanCount);
+            withPhantom.ServedBy.Should().BeEquivalentTo(without.ServedBy);
+            withPhantom.ServedBy.Should().Contain(new[]
+            {
+                "api-gateway-1", "orders-api-1", "inventory-api-1", "orders-created-1",
+            });
+        }
+
     }
 }
