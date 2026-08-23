@@ -38,8 +38,6 @@ export interface RunResult {
 export interface OtlpStatus {
   configured: boolean;
   endpoint: string | null;
-  /** Whether this instance lets a visitor name their own destination. */
-  clientConfigurable: boolean;
   hint: string;
 }
 

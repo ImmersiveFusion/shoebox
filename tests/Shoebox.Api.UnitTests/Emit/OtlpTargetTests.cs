@@ -156,30 +156,5 @@ namespace Shoebox.Api.UnitTests.Emit
             OtlpTarget.IsReachableTarget(uri!, isDevelopment: true, out _).Should().BeTrue();
         }
 
-        [Test]
-        public void Client_Targets_Are_Off_By_Default_Anywhere_Public()
-        {
-            Environment.SetEnvironmentVariable("SHOEBOX_ALLOW_CLIENT_OTLP", null);
-
-            OtlpTarget.ClientTargetsAllowed(isDevelopment: false).Should().BeFalse();
-            OtlpTarget.ClientTargetsAllowed(isDevelopment: true).Should().BeTrue();
-        }
-
-        [Test]
-        public void The_Operator_Can_Say_Otherwise_In_As_Many_Words()
-        {
-            try
-            {
-                Environment.SetEnvironmentVariable("SHOEBOX_ALLOW_CLIENT_OTLP", "true");
-                OtlpTarget.ClientTargetsAllowed(isDevelopment: false).Should().BeTrue();
-
-                Environment.SetEnvironmentVariable("SHOEBOX_ALLOW_CLIENT_OTLP", "false");
-                OtlpTarget.ClientTargetsAllowed(isDevelopment: true).Should().BeFalse();
-            }
-            finally
-            {
-                Environment.SetEnvironmentVariable("SHOEBOX_ALLOW_CLIENT_OTLP", null);
-            }
-        }
     }
 }

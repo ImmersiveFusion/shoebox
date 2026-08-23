@@ -94,19 +94,13 @@
           exporting to <code>{{ status.endpoint }}</code>
         </ng-container>
         <ng-template #noEndpoint>
-          <strong>No OTLP endpoint configured.</strong> Runs still execute, nothing is exported.
-          <ng-container *ngIf="status.clientConfigurable; else setEnv">
-            Name one below to get these traces yourself.
-          </ng-container>
-          <ng-template #setEnv>
-            Set <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> to any OTLP backend.
-          </ng-template>
+          <strong>This instance exports nowhere by default.</strong> Runs still execute.
+          Name a destination below to get these traces yourself.
         </ng-template>
       </ng-template>
     </span>
 
     <button type="button" class="destination-toggle"
-            *ngIf="otlp()?.clientConfigurable"
             (click)="showDestination.set(!showDestination())">
       {{ showDestination() ? 'Hide destination' : 'Send it somewhere' }}
     </button>
@@ -115,9 +109,10 @@
   <!--
     The same two knobs Snowglobe exposes as -endpoint and -headers, in the same
     formats. A hosted sandbox has no command line to pass flags on, so this is where
-    they live. The server decides whether they are offered at all.
+    they live, and it is the only way somebody looking at a deployed instance can get
+    their own traces.
   -->
-  <section class="panel destination" *ngIf="otlp()?.clientConfigurable && showDestination()">
+  <section class="panel destination" *ngIf="showDestination()">
     <label for="otlp-endpoint">Send these traces to your own backend</label>
 
     <div class="destination-fields">

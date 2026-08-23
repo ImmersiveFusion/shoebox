@@ -113,34 +113,21 @@ public sealed record OtlpTarget(Uri Endpoint, string Headers)
     }
 
     /// <summary>
-    /// Whether a visitor-supplied endpoint may be used at all.
-    ///
-    /// This is the difference between the two tools that cannot be papered over.
-    /// Snowglobe runs on your machine and points where you say, and the only person
-    /// who can be harmed by a bad endpoint is you. A hosted Shoebox is a stranger
-    /// asking our server to open a connection somewhere, which is a server-side
-    /// request forgery primitive if it is left open.
-    ///
-    /// So it is on where the operator is the visitor, which is Development, and off
-    /// otherwise unless the operator says otherwise in as many words.
-    /// </summary>
-    public static bool ClientTargetsAllowed(bool isDevelopment)
-    {
-        var setting = Environment.GetEnvironmentVariable("SHOEBOX_ALLOW_CLIENT_OTLP");
-        if (!string.IsNullOrWhiteSpace(setting))
-        {
-            return setting.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return isDevelopment;
-    }
-
-    /// <summary>
     /// Refuses the addresses that make SSRF worth attempting: loopback, link-local,
     /// unique-local and the private ranges, plus anything that resolves to them.
     ///
+    /// This is the whole of the answer to a hosted instance accepting a destination
+    /// from a stranger. There is no switch to turn the feature off, because a switch
+    /// only the operator can reach is not a mitigation for a tool whose promise is no
+    /// account and no install: refusing the addresses worth forging against is.
+    ///
     /// Skipped in Development, where localhost is the whole point: a Collector on
     /// 4317 is the normal thing to be pointing at while working.
+    ///
+    /// Known residual: validation resolves the name, and the exporter resolves it
+    /// again when it connects. A name that answers differently between those two
+    /// moments would slip past this. Closing it means pinning the resolved address
+    /// through to the socket, which the OTLP exporter does not expose.
     /// </summary>
     public static bool IsReachableTarget(Uri endpoint, bool isDevelopment, out string? error)
     {

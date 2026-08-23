@@ -28,12 +28,9 @@ builder.ConfigureOpenTelemetry();
 
 var app = builder.Build();
 
-// Whether a visitor may name their own OTLP destination. On where the operator is
-// the visitor, off on anything public unless SHOEBOX_ALLOW_CLIENT_OTLP says
-// otherwise. See OtlpTarget.ClientTargetsAllowed for why a hosted instance is a
-// different question from a local one.
+// Development skips the address guard, because pointing at a Collector on localhost
+// is the normal thing to be doing while working. Everywhere else it applies.
 var isDevelopment = app.Environment.IsDevelopment();
-var clientTargetsAllowed = OtlpTarget.ClientTargetsAllowed(isDevelopment);
 
 if (app.Environment.IsDevelopment())
 {
@@ -109,11 +106,11 @@ app.MapPost("/run", (RunRequest request, TopologyRunner runner, HttpRequest http
     var sandboxId = http.GetSandboxId();
 
     // A run can bring its own destination, the way Snowglobe takes -endpoint and
-    // -headers. Ignored outright when the operator has not allowed it, rather than
-    // half-honored: a request that quietly went somewhere other than where it said
-    // would be worse than one that plainly did not.
+    // -headers. This is the only route to their own traces for somebody looking at a
+    // deployed instance, who has no environment to configure and no server to
+    // configure it on.
     var wantsOwnTarget = !string.IsNullOrWhiteSpace(request.Endpoint) || !string.IsNullOrWhiteSpace(request.Headers);
-    if (wantsOwnTarget && clientTargetsAllowed)
+    if (wantsOwnTarget)
     {
         var target = OtlpTarget.Resolve(request.Endpoint, request.Headers, out var parseError);
         if (target is null)
@@ -135,9 +132,9 @@ app.MapPost("/run", (RunRequest request, TopologyRunner runner, HttpRequest http
     return Results.Ok(runner.Run(graph, runIndex, sandboxId));
 }).WithName("Run");
 
-// Says whether telemetry is actually going anywhere, so a user who sees no traces
-// can tell an unconfigured endpoint from a broken diagram, and whether they are
-// allowed to name their own destination.
+// Says whether this instance is exporting anywhere by default, so a user who sees no
+// traces can tell an unconfigured endpoint from a broken diagram. Naming your own
+// destination is always available and needs no announcing.
 app.MapGet("/otlp/status", () =>
 {
     var target = PodTracerPool.Resolve();
@@ -145,7 +142,6 @@ app.MapGet("/otlp/status", () =>
     {
         configured = target is not null,
         endpoint = target?.Endpoint.ToString(),
-        clientConfigurable = clientTargetsAllowed,
         hint = "set OTEL_EXPORTER_OTLP_ENDPOINT to any OTLP backend: Jaeger, Tempo, Grafana, SigNoz, or a Collector",
     });
 }).WithName("OtlpStatus");

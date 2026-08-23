@@ -71,26 +71,30 @@ Runs still execute with nothing configured; they just do not go anywhere, and th
 UI says so, because a person seeing no traces needs to tell an unset endpoint from
 a broken diagram.
 
-### Letting a visitor send traces to their own backend
+### Sending traces to your own backend
 
 Snowglobe takes `-endpoint` and `-headers` on the command line. A hosted Shoebox
-has no command line, and the person looking at the page cannot set an environment
-variable on someone else's server, so the same two knobs appear in the UI: a
-destination and its headers, in the same two formats. Whatever is typed there wins
-over the server's own configuration for that run, exactly as a flag beats the
-environment in Snowglobe.
+has no command line, and you cannot set an environment variable on somebody else's
+server, so the same two knobs are in the page: a destination and its headers, in
+the same two formats. What you type wins over whatever the instance is configured
+with, exactly as a flag beats the environment in Snowglobe.
 
-They are kept in that browser, sent only with a run, never written to the
-shareable link, and never stored on the server.
+It is always available, including on the deployed instance. That is the point:
+without it, "no account, no install, real OpenTelemetry out" would stop at the
+third clause for everybody who did not host it themselves.
 
-**This is off by default anywhere public**, and that asymmetry is deliberate.
-Snowglobe runs on your machine and points where you say; the only person a bad
-endpoint can hurt is you. A hosted Shoebox is a stranger asking our server to open
-a connection somewhere, which is a server-side request forgery primitive if it is
-left open. So it is on in Development, where the operator is the visitor, and off
-otherwise unless `SHOEBOX_ALLOW_CLIENT_OTLP=true` says otherwise. Even then,
-endpoints resolving to loopback, link-local or private ranges are refused, the
-cloud metadata service among them.
+Your endpoint and headers stay in your browser, go out only with a run, are never
+written to the shareable link, and are never stored on the server. Leave them empty
+and runs go wherever the instance was configured to send them.
+
+What makes this safe to offer publicly is not a switch, since a switch only the
+operator can reach helps nobody typing into the page. It is the address check:
+outside Development, an endpoint resolving to loopback, link-local, unique-local or
+a private range is refused, `169.254.169.254` among them. **Known gap:** the name is
+resolved once to check it and again by the exporter when it connects, so a name that
+answers differently between those two moments would get past it. Closing that means
+pinning the resolved address through to the socket, which the OTLP exporter does not
+expose.
 
 ## Running it
 
