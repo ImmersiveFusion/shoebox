@@ -94,12 +94,16 @@ public sealed class TopologyRunner
     /// </summary>
     private static IReadOnlyList<string> Notes(Graph graph, RunState state)
     {
-        if (state.Phantoms.Count == 0) return graph.Notes;
+        var notes = graph.Notes.Concat(state.Notes);
 
-        var named = string.Join(", ", state.Phantoms.Distinct());
-        return graph.Notes
-            .Append($"{named} was called and never reported. Every span naming it belongs to something else, and it has none of its own, which is how a backend infers a service nobody knew about.")
-            .ToList();
+        if (state.Phantoms.Count > 0)
+        {
+            var named = string.Join(", ", state.Phantoms.Distinct());
+            notes = notes.Append(
+                $"Nothing consumed what was published. {named} should have and never ran, so this trace has a publish with no receive and no span anywhere carries its name. An absence is the only evidence a phantom leaves.");
+        }
+
+        return notes.ToList();
     }
 
     private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
@@ -436,5 +440,13 @@ public sealed class TopologyRunner
         public int FailedSpanCount { get; set; }
         private readonly List<string> _notes = new();
         public void Note(string n) => _notes.Add(n);
+
+        /// <summary>
+        /// These were being collected and thrown away. The cycle warning has been
+        /// written by the walk and dropped on the floor since it was added, so a
+        /// diagram that loops has been silently truncating at depth 32 with
+        /// nothing said about it.
+        /// </summary>
+        public IReadOnlyList<string> Notes => _notes;
     }
 }
