@@ -237,6 +237,22 @@ public sealed class TopologyRunner
                 continue;
             }
 
+            // Same rule as a queue, and for the same reason. A database, a cache
+            // and a third party are things you call, not things that report. None
+            // of them run your instrumentation, so none of them has a
+            // service.name, and inventing one puts a service called sql-server in
+            // a topology where no such service exists.
+            //
+            // The caller's CLIENT span carries db.system.name or server.address
+            // and that is the whole record of the dependency, which is exactly
+            // what a real trace looks like.
+            if (target.Kind is PodKind.Datastore or PodKind.Cache or PodKind.External)
+            {
+                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                EmitDependencyCall(pod, target, activity, state, instance);
+                continue;
+            }
+
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             Visit(graph, target, activity, state, depth + 1);
         }
@@ -336,6 +352,31 @@ public sealed class TopologyRunner
         // the message level, which is the correlation the spec actually defines.
         // Deterministic, because a shared link has to replay identically.
         yield return new("messaging.message.id", messageId);
+    }
+
+    /// <summary>
+    /// The caller's record of calling something that does not report for itself.
+    ///
+    /// Everything a trace ever knows about a datastore, a cache or a third party
+    /// comes from the client spans of the services that called it. They are not
+    /// participants, they are attributes on somebody else's span.
+    /// </summary>
+    private void EmitDependencyCall(Pod from, Pod to, Activity? parent, RunState state, int instance)
+    {
+        var source = _pool.For(from.ServiceName, instance);
+        using var activity = source.StartActivity(
+            SpanName(to),
+            ActivityKind.Client,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        state.Clock = state.Clock.AddMilliseconds(to.DefaultLatencyMs);
+        if (activity is null) return;
+
+        activity.SetEndTime(state.Clock.UtcDateTime);
+        state.SpanCount++;
+        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
     }
 
     /// <summary>
