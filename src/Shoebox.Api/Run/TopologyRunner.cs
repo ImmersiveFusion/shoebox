@@ -102,7 +102,7 @@ public sealed class TopologyRunner
             .ToList();
     }
 
-    private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0)
+    private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
     {
         // A cycle in a pasted diagram is somebody's real architecture, not a bug.
         // Bound the walk rather than refusing to run it.
@@ -119,10 +119,19 @@ public sealed class TopologyRunner
         // walk of six pods finishes in microseconds, which exports a trace where
         // every span is a hairline and nothing can be read off it. Pod.Kind
         // already carries a plausible latency; this is what spends it.
+        // A pod reached through a queue is a consumer, and OpenTelemetry has a
+        // span kind and a name shape for exactly that. Getting this wrong is not
+        // cosmetic: anything inferring topology from messaging looks for a
+        // producer and a consumer on the same destination, and a CLIENT span
+        // carrying no operation type pairs with nothing.
+        var kind = via is not null
+            ? ActivityKind.Consumer
+            : pod.Kind == PodKind.Service && parent is null ? ActivityKind.Server : ActivityKind.Client;
+
         var start = state.Clock;
         using var activity = source.StartActivity(
-            SpanName(pod),
-            pod.Kind == PodKind.Service && parent is null ? ActivityKind.Server : ActivityKind.Client,
+            via is { } d ? $"process {d.Queue.ServiceName}" : SpanName(pod),
+            kind,
             parent?.Context ?? default,
             startTime: start);
 
@@ -136,7 +145,15 @@ public sealed class TopologyRunner
 
             activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
             activity.SetTag("service.instance.id", $"{pod.ServiceName}-{instance}");
-            foreach (var (k, v) in SemanticTags(pod)) activity.SetTag(k, v);
+            if (via is { } delivery)
+            {
+                foreach (var (k, v) in MessagingTags(delivery.Queue, "process", "process", delivery.MessageId))
+                {
+                    activity.SetTag(k, v);
+                }
+            }
+
+            foreach (var (k, v) in SemanticTags(pod, kind)) activity.SetTag(k, v);
         }
 
         foreach (var call in graph.From(pod.Id))
@@ -175,11 +192,106 @@ public sealed class TopologyRunner
                 continue;
             }
 
+            // A queue is a destination, not a service. The publish belongs to
+            // whoever published and the receive to whoever consumed; nothing
+            // emits on behalf of the queue itself, because in a real system
+            // nothing does.
+            if (target.Kind == PodKind.Queue)
+            {
+                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                PublishAndDeliver(graph, pod, target, activity, state, depth, instance);
+                continue;
+            }
+
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             Visit(graph, target, activity, state, depth + 1);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
+    }
+
+    /// <summary>
+    /// The publish, and whatever picks it up.
+    ///
+    /// The producer emits a PRODUCER span naming the destination, and each
+    /// consumer emits its own CONSUMER span naming the same one. That pairing is
+    /// what makes a queue legible to anything reading the telemetry, and it is
+    /// what a phantom breaks: the publish happens, no receive ever correlates to
+    /// it, and the missing consumer can be inferred precisely because the
+    /// destination is on both halves when things are working.
+    /// </summary>
+    private void PublishAndDeliver(Graph graph, Pod producer, Pod queue, Activity? parent, RunState state, int depth, int instance)
+    {
+        // Deterministic: the same diagram and run index produce the same id, so a
+        // shared link is still a runnable repro.
+        var messageId = $"{queue.ServiceName}-{state.RunIndex}";
+
+        var source = _pool.For(producer.ServiceName, instance);
+        using var publish = source.StartActivity(
+            $"publish {queue.ServiceName}",
+            ActivityKind.Producer,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        state.Clock = state.Clock.AddMilliseconds(queue.DefaultLatencyMs);
+
+        if (publish is not null)
+        {
+            publish.SetEndTime(state.Clock.UtcDateTime);
+            state.SpanCount++;
+            state.RootTraceId ??= publish.TraceId.ToString();
+            publish.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+            publish.SetTag("service.instance.id", $"{producer.ServiceName}-{instance}");
+            foreach (var (k, v) in MessagingTags(queue, "publish", "send", messageId)) publish.SetTag(k, v);
+        }
+
+        foreach (var call in graph.From(queue.Id))
+        {
+            var consumer = graph.ById(call.ToId);
+            if (consumer is null) continue;
+
+            if (call.FailsFor(SelectInstance(consumer, state.RunIndex)))
+            {
+                state.Hop(queue.Id, consumer.Id, failed: true, ms: FailureMs);
+                EmitFailedCall(queue, consumer, call, publish, state, instance);
+                continue;
+            }
+
+            if (call.Phantom)
+            {
+                state.Phantoms.Add(consumer.ServiceName);
+                continue;
+            }
+
+            state.Hop(queue.Id, consumer.Id, failed: false, ms: consumer.DefaultLatencyMs);
+            Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
+        }
+    }
+
+    /// <summary>
+    /// The OpenTelemetry messaging attributes, current spelling. operation.type is
+    /// the one that pairs a publish with a receive, and it is the one Shoebox was
+    /// missing entirely.
+    /// </summary>
+    private static IEnumerable<KeyValuePair<string, object?>> MessagingTags(
+        Pod queue, string operationName, string operationType, string messageId)
+    {
+        yield return new("messaging.system", "rabbitmq");
+        yield return new("messaging.destination.name", queue.ServiceName);
+
+        // operation.name is a free string and takes the system's own word.
+        // operation.type is an enumeration and takes exactly one of create, send,
+        // receive, process, settle. "publish" was in there and is not a member of
+        // it: an invented value on the one attribute a conformant backend reads to
+        // decide whether a span is a producer or a consumer, which is why nothing
+        // could pair the two halves of a queue.
+        yield return new("messaging.operation.name", operationName);
+        yield return new("messaging.operation.type", operationType);
+
+        // Without an id there is nothing to correlate a receive to a publish at
+        // the message level, which is the correlation the spec actually defines.
+        // Deterministic, because a shared link has to replay identically.
+        yield return new("messaging.message.id", messageId);
     }
 
     /// <summary>
@@ -208,7 +320,7 @@ public sealed class TopologyRunner
         activity.SetStatus(ActivityStatusCode.Error, reason);
         activity.SetTag("error.type", reason);
         activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
-        foreach (var (k, v) in SemanticTags(to)) activity.SetTag(k, v);
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
     }
 
     /// <summary>
@@ -240,7 +352,7 @@ public sealed class TopologyRunner
     /// The shape somebody already drew decides the attributes. Nobody has to learn
     /// a convention to get semantically correct telemetry out.
     /// </summary>
-    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(Pod pod)
+    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(Pod pod, ActivityKind kind)
     {
         yield return new("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
 
@@ -259,12 +371,30 @@ public sealed class TopologyRunner
                 yield return new("messaging.destination.name", pod.ServiceName);
                 break;
             case PodKind.External:
+                // server.port and url.full are Required on HTTP client spans, not
+                // optional extras, and both were missing.
                 yield return new("http.request.method", "POST");
                 yield return new("server.address", $"{pod.ServiceName}.example.com");
+                yield return new("server.port", 443);
+                yield return new("url.full", $"https://{pod.ServiceName}.example.com/{pod.ServiceName}");
                 break;
             default:
                 yield return new("http.request.method", "GET");
-                yield return new("http.route", $"/{pod.ServiceName}");
+
+                // http.route is a SERVER-span attribute and appears nowhere in the
+                // client table. It was going on every service span regardless of
+                // kind, so internal calls carried a route they never served.
+                if (kind == ActivityKind.Server)
+                {
+                    yield return new("http.route", $"/{pod.ServiceName}");
+                }
+                else
+                {
+                    yield return new("server.address", $"{pod.ServiceName}.internal");
+                    yield return new("server.port", 8080);
+                    yield return new("url.full", $"http://{pod.ServiceName}.internal:8080/{pod.ServiceName}");
+                }
+
                 break;
         }
     }
