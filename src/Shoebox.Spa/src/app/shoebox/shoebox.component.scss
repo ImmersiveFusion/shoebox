@@ -372,6 +372,11 @@ footer {
   border-top: 1px solid var(--line);
   padding-top: 1rem;
 
-  p { max-width: 118ch; }
+  // No cap. A measure set in ch is a measure set in the font's own size, and at
+  // 0.85rem it kept coming out around 800px inside a much wider box: two short
+  // lines with half the width empty beside them, which reads as a mistake rather
+  // than as typography. The footer is three lines of text; letting it fill is
+  // the lesser evil.
+  p { max-width: none; }
   a { color: var(--teal); }
 }
