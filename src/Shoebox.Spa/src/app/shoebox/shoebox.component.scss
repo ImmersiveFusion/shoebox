@@ -142,14 +142,17 @@ button.chip {
   // runs and not others.
   //
   // Kept faint. These are behind label text that still has to pass contrast.
+  // Red, not the house magenta. Magenta is the diagram's damage colour and it
+  // has to survive next to violet third parties in there, but on a chip against
+  // a navy fill it just reads purple, and purple does not read as "this breaks".
   &.will-fail {
-    border-color: rgba(255, 45, 111, 0.45);
-    background-color: rgba(255, 45, 111, 0.06);
+    border-color: rgba(255, 68, 56, 0.5);
+    background-color: rgba(255, 68, 56, 0.07);
     background-image:
-      repeating-linear-gradient(45deg, rgba(255, 45, 111, 0.22) 0 1px, transparent 1px 7px),
-      repeating-linear-gradient(-45deg, rgba(255, 45, 111, 0.22) 0 1px, transparent 1px 7px);
+      repeating-linear-gradient(45deg, rgba(255, 68, 56, 0.3) 0 1px, transparent 1px 7px),
+      repeating-linear-gradient(-45deg, rgba(255, 68, 56, 0.3) 0 1px, transparent 1px 7px);
 
-    &:hover { color: #ff86ac; border-color: var(--magenta); }
+    &:hover { color: #ff8f86; border-color: rgba(255, 68, 56, 0.95); }
   }
 
   &.may-fail {
