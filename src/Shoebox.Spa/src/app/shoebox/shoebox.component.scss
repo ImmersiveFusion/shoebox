@@ -151,8 +151,16 @@ button.chip {
   // beats this, and they march in magenta. That is deliberate: a dead call that
   // is still visibly being attempted reads worse than a static one, which is
   // what it should read as.
+  //
+  // The !important is the same story as max-width above. Mermaid scopes its own
+  // rules by the diagram's id, so `#shoebox-graph .edge-pattern-solid` outranks
+  // anything a component stylesheet can write, and it sets stroke-dasharray to 0.
+  // Without this the animation still runs on every edge, offset and all, but a
+  // solid line with a moving dash offset looks exactly like a solid line: only
+  // the broken edge appeared to march, because linkStyle had given it a dash
+  // pattern inline.
   ::ng-deep svg .flowchart-link {
-    stroke-dasharray: 5 5;
+    stroke-dasharray: 5 5 !important;
     animation: shoebox-traffic 1s linear infinite;
   }
 }
