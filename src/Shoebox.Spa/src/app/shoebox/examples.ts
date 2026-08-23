@@ -111,6 +111,13 @@ export const EXAMPLES: readonly Example[] = [
   { id: 'worker-broken', group: 'Workflows', label: 'Work queue, publish fails',
     description: 'Every worker reaches the API and none can publish. The diff is one label',
     diagram: WORKER('-->|broken: connection refused|') },
+  { id: 'phantom-service', group: 'Distributed systems', label: 'A service that never answers',
+    description: 'Nothing fails and nothing is red. One service is in every span except its own',
+    diagram: `flowchart LR
+  gw[API Gateway] --> orders[Orders API]
+  orders --> inv[Inventory API]
+  orders -->|phantom| audit[Audit Service]` },
+
   { id: 'worker-broken-one', group: 'Distributed systems', label: 'Fails one run in five',
     description: 'Five workers, one of them broken. Four runs look perfect and the fifth does not',
     diagram: WORKER('-->|broken on #3: connection refused|') },

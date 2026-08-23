@@ -65,8 +65,21 @@ public sealed class TopologyRunner
             state.ServedBy,
             state.SpanCount,
             state.FailedSpanCount,
-            graph.Notes,
+            Notes(graph, state),
             state.Hops);
+    }
+
+    /// <summary>
+    /// The diagram's own notes, plus the one thing only a run can tell you.
+    /// </summary>
+    private static IReadOnlyList<string> Notes(Graph graph, RunState state)
+    {
+        if (state.Phantoms.Count == 0) return graph.Notes;
+
+        var named = string.Join(", ", state.Phantoms.Distinct());
+        return graph.Notes
+            .Append($"{named} never emitted a span of its own. Everything this trace knows about it, it learned from the services that called it.")
+            .ToList();
     }
 
     private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0)
@@ -118,11 +131,57 @@ public sealed class TopologyRunner
                 continue;
             }
 
+            // Drawn but never called. No hop, no span, no trace of it at all,
+            // which is exactly the point: nothing arrives to tell you it is
+            // missing, so the only way to notice is to compare the two panels.
+            if (call.Phantom)
+            {
+                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                EmitPhantomCall(pod, target, activity, state, instance);
+                continue;
+            }
+
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             Visit(graph, target, activity, state, depth + 1);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
+    }
+
+    /// <summary>
+    /// A call to something that never speaks for itself.
+    ///
+    /// The caller emits its client span like any other call, so the service is
+    /// named all over the trace: peer.service, the span name, the semantic
+    /// attributes for whatever kind of thing it is. What never arrives is a span
+    /// from the service itself, and nothing downstream of it happens either.
+    ///
+    /// That is what a phantom is. Anything building a service map out of traces
+    /// will draw this node, because other people's spans insist it exists, and it
+    /// has never emitted a byte of telemetry in its life. Nothing is marked red
+    /// and no call failed: every span in the trace is a success. The only
+    /// evidence is an absence, which is why it is the hardest of these to see and
+    /// the one most worth having an example for.
+    /// </summary>
+    private void EmitPhantomCall(Pod from, Pod to, Activity? parent, RunState state, int instance)
+    {
+        var source = _pool.For(from.ServiceName, instance);
+        using var activity = source.StartActivity(
+            $"{from.ServiceName} -> {to.ServiceName}",
+            ActivityKind.Client,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        state.Clock = state.Clock.AddMilliseconds(to.DefaultLatencyMs);
+        state.Phantoms.Add(to.ServiceName);
+        if (activity is null) return;
+
+        activity.SetEndTime(state.Clock.UtcDateTime);
+        state.SpanCount++;
+
+        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        activity.SetTag("peer.service", to.ServiceName);
+        foreach (var (k, v) in SemanticTags(to)) activity.SetTag(k, v);
     }
 
     /// <summary>
@@ -220,6 +279,9 @@ public sealed class TopologyRunner
         public DateTimeOffset Clock { get; set; } = DateTimeOffset.UtcNow;
 
         public List<Hop> Hops { get; } = new();
+
+        /// <summary>Called, named all over the trace, and never heard from.</summary>
+        public List<string> Phantoms { get; } = new();
         public void Hop(string from, string to, bool failed, int ms) =>
             Hops.Add(new Hop(from, to, failed, ms));
         public string? RootTraceId { get; set; }

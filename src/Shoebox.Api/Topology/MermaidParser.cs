@@ -111,6 +111,13 @@ public static partial class MermaidParser
         if (string.IsNullOrWhiteSpace(label)) return call;
 
         var text = label.Trim();
+
+        // "phantom" - drawn, but nothing ever goes down this edge.
+        if (text.StartsWith("phantom", StringComparison.OrdinalIgnoreCase))
+        {
+            return call with { Phantom = true };
+        }
+
         if (!text.StartsWith("broken", StringComparison.OrdinalIgnoreCase)) return call;
 
         var rest = text[6..].Trim();

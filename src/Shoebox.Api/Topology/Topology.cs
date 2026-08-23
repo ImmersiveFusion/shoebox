@@ -56,6 +56,20 @@ public sealed record Call(string FromId, string ToId)
     /// </summary>
     public string? FailureReason { get; init; }
 
+    /// <summary>
+    /// Drawn, believed in, and never actually made, from "phantom".
+    ///
+    /// The call does not happen and the thing on the far end of it emits nothing,
+    /// so it sits in the topology you drew and is absent from the trace. That gap
+    /// is the whole lesson: the picture is a model, the trace is the system, and
+    /// the first useful thing telemetry does is tell you where they differ.
+    ///
+    /// Not a failure. A failed call is a span with an error on it, which is
+    /// evidence. This leaves no evidence at all, which is why it is harder to
+    /// spot and worth teaching separately.
+    /// </summary>
+    public bool Phantom { get; init; }
+
     public bool FailsFor(int instance) =>
         Broken && (BrokenInstances.Count == 0 || BrokenInstances.Contains(instance));
 }

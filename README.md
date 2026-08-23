@@ -46,6 +46,14 @@ semantic conventions, so nothing new has to be learned.
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
+| `a -->\|phantom\| b` | b is called, and never emits a span of its own |
+
+**A phantom is not a failure.** `-->|broken|` produces a span with an error on
+it, which is evidence. `-->|phantom|` produces a trace where nothing failed, every
+span is green, and one service appears only in other services' spans because it has
+never emitted one of its own. Anything drawing a service map from traces will map
+it anyway, on the say-so of its neighbours. The only evidence is an absence, which
+is why it gets its own word.
 
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
