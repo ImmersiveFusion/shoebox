@@ -113,7 +113,7 @@
   </section>
 
   <section class="panel topology" *ngIf="topology() as parsed">
-    <h2>What Shoebox read</h2>
+    <h2>What's in the shoebox</h2>
     <table class="pods">
       <tr><th>pod</th><th>service.name</th><th>kind</th><th>replicas</th></tr>
       <tr *ngFor="let pod of parsed.pods">
