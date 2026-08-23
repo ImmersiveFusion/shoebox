@@ -105,6 +105,10 @@
           OTLP backend.
         </ng-template>
       </span>
+
+      <a class="cta" href="https://github.com/ImmersiveFusion/shoebox#running-it"
+         target="_blank" rel="noopener"
+         title="How to run Shoebox locally, or deploy your own">Run your own</a>
     </section>
 
     <section class="panel result" *ngIf="result() as run">
@@ -141,17 +145,18 @@
       mail clients and chat apps.
     </p>
 
-    <footer>
-      <p *ngIf="sandboxId">
-        Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
-        onto every span as <code>sandbox.id</code>. That is a live demonstration of baggage
-        propagation, inside a tool for learning to read telemetry.
-      </p>
-      <p>
-        Sibling to <a href="https://github.com/ImmersiveFusion/snowglobe">Snowglobe</a>,
-        which generates whole synthetic systems from one binary.
-        A snowglobe is sealed. In a shoebox you can open it up.
-      </p>
-    </footer>
   </div>
 </div>
+
+<footer>
+  <p *ngIf="sandboxId">
+    Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
+    onto every span as <code>sandbox.id</code>. That is a live demonstration of baggage
+    propagation, inside a tool for learning to read telemetry.
+  </p>
+  <p>
+    Sibling to <a href="https://github.com/ImmersiveFusion/snowglobe">Snowglobe</a>,
+    which generates whole synthetic systems from one binary.
+    A snowglobe is sealed. In a shoebox you can open it up.
+  </p>
+</footer>

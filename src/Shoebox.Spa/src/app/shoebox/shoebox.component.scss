@@ -7,7 +7,7 @@
   // Light comes from the top of the screen, so the far wall catches it and the
   // near wall is in shadow. Getting that backwards makes it read as a pyramid.
   max-width: min(96vw, 1680px);
-  margin: 1.5rem auto 3rem;
+  margin: 1.5rem auto 1.5rem;
   padding: 26px;
   border-radius: 16px;
   color: var(--ink);
@@ -44,7 +44,10 @@
 
   h1 { display: none; }
   .tagline { display: none; }
-  .lede { margin: 0; color: var(--muted); max-width: 96ch; }
+  // No cap, same reason as the footer. A measure in ch is a measure in the
+  // font's own size, so 96ch came out near 720px inside a floor twice that: one
+  // sentence broken over three lines with half the box empty beside it.
+  .lede { margin: 0; color: var(--muted); }
 }
 
 .panel {
@@ -322,6 +325,29 @@ button.transport.rewind {
 .runcount { color: var(--muted); }
 .otlp { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
 
+// Sits at the end of the control row, after the line saying where this instance
+// exports. That is the moment the question occurs to somebody: they have just
+// watched it work and want it pointed at their own backend. Goes to the README's
+// Running it section, which covers local and deployed both.
+a.cta {
+  flex: none;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(47, 212, 196, 0.45);
+  color: var(--teal);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    color: #04121a;
+    background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+    border-color: transparent;
+    box-shadow: 0 6px 18px rgba(47, 212, 196, 0.3);
+  }
+}
+
 .stats {
   list-style: none;
   display: flex;
@@ -365,12 +391,17 @@ code { font-family: ui-monospace, Consolas, monospace; }
 .error { color: var(--magenta); font-size: 0.88rem; }
 .urlwarning { color: var(--magenta); font-size: 0.88rem; }
 
+// Outside the box, because it is about the tool rather than a thing in the box,
+// but tracking the box rather than the viewport: same max-width, same centring,
+// and indented by the wall plus the floor's own padding so it starts on the same
+// vertical as the panels above it instead of flush against the window.
 footer {
-  margin-top: 2rem;
+  max-width: min(96vw, 1680px);
+  margin: 0 auto 3rem;
+  padding: 1rem calc(26px + 1.5rem) 0;
   color: var(--muted);
   font-size: 0.85rem;
   border-top: 1px solid var(--line);
-  padding-top: 1rem;
 
   // No cap. A measure set in ch is a measure set in the font's own size, and at
   // 0.85rem it kept coming out around 800px inside a much wider box: two short
