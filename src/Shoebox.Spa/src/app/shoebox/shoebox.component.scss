@@ -270,6 +270,12 @@ $graph-paper:
   // solid line with a moving dash offset looks exactly like a solid line: only
   // the broken edge appeared to march, because linkStyle had given it a dash
   // pattern inline.
+  // The burst a refused call leaves behind. Expands and fades once, then the
+  // whole layer is removed, so nothing accumulates across runs.
+  ::ng-deep .span-flight-burst {
+    animation: shoebox-burst 420ms ease-out forwards;
+  }
+
   ::ng-deep svg .flowchart-link {
     stroke-dasharray: 5 5 !important;
     animation: shoebox-traffic 1s linear infinite;
@@ -278,6 +284,11 @@ $graph-paper:
 
 @keyframes shoebox-traffic {
   to { stroke-dashoffset: -10; }
+}
+
+@keyframes shoebox-burst {
+  from { r: 5; opacity: 0.9; stroke-width: 2; }
+  to   { r: 18; opacity: 0; stroke-width: 0.5; }
 }
 
 // The global reduced-motion rule deliberately excludes the SVG subtree, because

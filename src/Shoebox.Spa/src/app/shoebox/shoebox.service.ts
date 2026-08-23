@@ -26,6 +26,13 @@ export interface ParsedTopology {
   notes: string[];
 }
 
+export interface Hop {
+  from: string;
+  to: string;
+  failed: boolean;
+  ms: number;
+}
+
 export interface RunResult {
   runIndex: number;
   traceId: string | null;
@@ -33,6 +40,8 @@ export interface RunResult {
   spanCount: number;
   failedSpanCount: number;
   notes: string[];
+  /** The edges this run crossed, in order, for replaying it on the diagram. */
+  hops: Hop[];
 }
 
 export interface OtlpStatus {

@@ -4,6 +4,7 @@ import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example, Outcome, outcomeOf } from '
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import { URL_LENGTH_WARNING, readDiagramFromUrl, writeDiagramToUrl } from './diagram-url';
 import { decorate } from './diagram-style';
+import { flyRun } from './span-flight';
 
 @Component({
   selector: 'app-shoebox',
@@ -129,8 +130,16 @@ export class ShoeboxComponent implements OnInit {
     this.service.run(this.diagram, this.runIndex, this.sandboxId).subscribe(result => {
       this.result.set(result);
       this.runIndex += 1;
+
+      // Replay the path the server says the request took. Firing again cancels
+      // whatever is still in the air, so two dots are never on the same diagram
+      // telling different stories.
+      this.stopFlight?.();
+      this.stopFlight = flyRun(this.renderTarget.nativeElement, result.hops ?? []);
     });
   }
+
+  private stopFlight: (() => void) | null = null;
 
   resetRuns(): void {
     this.runIndex = 1;
@@ -179,6 +188,9 @@ export class ShoeboxComponent implements OnInit {
   private async render(): Promise<void> {
     try {
       if (!this.mermaid) return;
+      // The SVG about to be replaced is the one the dot is riding.
+      this.stopFlight?.();
+      this.stopFlight = null;
       const { svg } = await this.mermaid.render('shoebox-graph', decorate(this.diagram));
       this.renderTarget.nativeElement.innerHTML = svg;
       this.renderError.set(null);
