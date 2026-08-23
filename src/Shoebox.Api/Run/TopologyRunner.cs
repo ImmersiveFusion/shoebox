@@ -216,22 +216,24 @@ public sealed class TopologyRunner
             // whoever published and the receive to whoever consumed; nothing
             // emits on behalf of the queue itself, because in a real system
             // nothing does.
-            // Producer semantics only when the diagram models the far side.
+            // A queue is a destination and never a service, so it never gets an
+            // identity of its own. The publish belongs to whoever published and
+            // the receive to whoever consumed.
             //
-            // A queue drawn with nothing after it is the end of what was drawn,
-            // not a statement that nothing consumes it. Publishing to it with no
-            // receive says the second thing, and anything watching for unconsumed
-            // destinations then reports every terminal queue in every diagram as a
-            // phantom. That is how RabbitMQ became one in an example whose lesson
-            // was about a broken worker.
+            // Skipping this for a terminal queue was worse than the problem it
+            // solved: the queue fell through to being walked as an ordinary pod,
+            // and every pod gets its own service.name, so RabbitMQ was being
+            // published as a service called rabbitmq. A broker turned into a
+            // microservice in everybody's topology.
             //
-            // "Nothing consumes this" is a claim, and the only thing entitled to
-            // make it is the phantom marker, where somebody said so on purpose.
-            var consumers = graph.From(target.Id).ToList();
-            if (target.Kind == PodKind.Queue && consumers.Count > 0)
+            // A terminal queue therefore does publish with nothing receiving,
+            // which is what it is. If that reads as unconsumed, it is unconsumed:
+            // the honest fix is to draw who consumes it, not to withhold the
+            // publish.
+            if (target.Kind == PodKind.Queue)
             {
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                PublishAndDeliver(graph, pod, target, consumers, activity, state, depth, instance);
+                PublishAndDeliver(graph, pod, target, graph.From(target.Id).ToList(), activity, state, depth, instance);
                 continue;
             }
 
@@ -409,8 +411,19 @@ public sealed class TopologyRunner
                 yield return new("db.operation.name", "GET");
                 break;
             case PodKind.Queue:
-                yield return new("messaging.system", "rabbitmq");
-                yield return new("messaging.destination.name", pod.ServiceName);
+                // Nothing. Messaging semantics belong on the publish and the
+                // receive, which PublishAndDeliver emits, and they only exist when
+                // the diagram models the far side of the queue.
+                //
+                // This was putting messaging.system on the queue's own span for a
+                // terminal queue, where by definition we decided not to model the
+                // hop. It also omitted the deprecated destination spelling that a
+                // reader keys on, so the destination came back empty and the key
+                // collapsed to the bare system name: a node called "rabbitmq",
+                // which is the broker rather than anything in the diagram.
+                //
+                // And it asserted rabbitmq for every queue regardless of the label
+                // on it. A queue somebody called Kafka reported as RabbitMQ.
                 break;
             case PodKind.External:
                 // server.port and url.full are Required on HTTP client spans, not

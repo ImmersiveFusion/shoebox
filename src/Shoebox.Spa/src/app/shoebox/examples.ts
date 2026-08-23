@@ -35,7 +35,8 @@ const WORKER = (rabbitLabel: string) => `flowchart LR
   orders --> q[[Job Queue]]
   q --> worker[Worker x5]
   worker --> api[Inventory API]
-  worker ${rabbitLabel} rabbit[[RabbitMQ]]`;
+  worker ${rabbitLabel} rabbit[[order.shipped]]
+  rabbit --> notify[Notification Service]`;
 
 /**
  * One axis: the kind of system the example is about.
