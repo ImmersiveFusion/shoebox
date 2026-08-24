@@ -104,9 +104,20 @@ textarea {
 
 .example-group {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+// The chips wrap in here rather than in the row. When they were siblings of the
+// label, a row with more chips than fit wrapped them to the row's left edge,
+// underneath the label, reading as a second unlabelled group. The label keeps its
+// own fixed column and the chips keep theirs.
+.chips {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
 }
 
 .group-name {
