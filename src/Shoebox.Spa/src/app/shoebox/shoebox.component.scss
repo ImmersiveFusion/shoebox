@@ -1,0 +1,515 @@
+.shoebox {
+  // A box seen from directly above. The four wall faces are one conic gradient:
+  // sectors cut at the diagonals give exactly four trapezoids, which is what the
+  // inside of a box looks like from straight overhead. The floor sits on top of
+  // the middle and hides the part that would be nonsense.
+  //
+  // Light comes from the top of the screen, so the far wall catches it and the
+  // near wall is in shadow. Getting that backwards makes it read as a pyramid.
+  max-width: min(96vw, 1680px);
+  margin: 1.5rem auto 1.5rem;
+  padding: 26px;
+  border-radius: 16px;
+  color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  background: conic-gradient(
+    from 45deg,
+    #16293c 0deg 90deg,
+    #0d1b28 90deg 180deg,
+    #16293c 180deg 270deg,
+    #20374d 270deg 360deg
+  );
+
+  box-shadow:
+    0 1px 0 rgba(93, 242, 226, 0.10) inset,
+    0 34px 64px rgba(0, 0, 0, 0.55);
+}
+
+// The bottom of the box. Everything rests on this, and the walls cast onto it.
+.box-floor {
+  border-radius: 6px;
+  // Symmetric. The 3rem here was leaving room for a footer that has since moved
+  // out of the box, and it was stacking with the last panel's own margin, so the
+  // floor ran on for about 64px after the last thing sitting on it.
+  padding: 2rem 1.5rem;
+
+  // Nothing sitting on the floor pushes past the last one.
+  > :last-child { margin-bottom: 0; }
+  background: linear-gradient(180deg, #0a1521, #070f18);
+  box-shadow:
+    0 28px 42px -28px rgba(0, 0, 0, 0.9) inset,
+    0 -20px 32px -28px rgba(0, 0, 0, 0.65) inset,
+    24px 0 36px -28px rgba(0, 0, 0, 0.65) inset,
+    -24px 0 36px -28px rgba(0, 0, 0, 0.65) inset;
+}
+
+
+.masthead {
+  margin-bottom: 1.5rem;
+
+  h1 { display: none; }
+  .tagline { display: none; }
+  // No cap, same reason as the footer. A measure in ch is a measure in the
+  // font's own size, so 96ch came out near 720px inside a floor twice that: one
+  // sentence broken over three lines with half the box empty beside it.
+  .lede { margin: 0; color: var(--muted); }
+}
+
+.panel {
+  position: relative;
+  background: linear-gradient(180deg, rgba(18, 32, 47, 0.92), rgba(11, 22, 34, 0.92));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  // No drop shadow. These sit on the floor of the box, and anything that casts
+  // down the page reads as floating above it instead of resting in it.
+  box-shadow: 0 1px 0 rgba(93, 242, 226, 0.06) inset;
+}
+
+label {
+  display: block;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+select, textarea {
+  width: 100%;
+  background: var(--navy);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.95rem;
+}
+
+textarea {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+// Sixteen examples that all fit on screen at once do not need a dropdown, an OS
+// scrollbar, and two clicks. Grouped chips: everything visible, one click, and
+// the description of whatever is selected sits underneath.
+.example-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.example-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.group-name {
+  width: 8.5rem;
+  flex: none;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+button.chip {
+  background: var(--navy);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+
+  // What this example will do, encoded twice: once in colour, once in the
+  // direction of the hatching. Colour alone fails roughly one man in twelve, and
+  // the two hues in play here are the pair that fails first, so the pattern is
+  // the load-bearing half and the colour is the reinforcement.
+  //
+  // Horizontal is calm and reads as level. Crosshatch is the only one where the
+  // lines actually cross, which is what a struck-through, cancelled thing looks
+  // like. A single diagonal sits between the two, for the ones that fail on some
+  // runs and not others.
+  //
+  // Kept faint. These are behind label text that still has to pass contrast.
+  // Red, not the house magenta. Magenta is the diagram's damage colour and it
+  // has to survive next to violet third parties in there, but on a chip against
+  // a navy fill it just reads purple, and purple does not read as "this breaks".
+  &.will-fail {
+    border-color: rgba(255, 68, 56, 0.5);
+    background-color: rgba(255, 68, 56, 0.07);
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255, 68, 56, 0.3) 0 1px, transparent 1px 7px),
+      repeating-linear-gradient(-45deg, rgba(255, 68, 56, 0.3) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #ff8f86; border-color: rgba(255, 68, 56, 0.95); }
+  }
+
+  &.may-fail {
+    border-color: rgba(255, 176, 90, 0.45);
+    background-color: rgba(255, 176, 90, 0.06);
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255, 176, 90, 0.26) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #ffc98a; border-color: rgba(255, 176, 90, 0.9); }
+  }
+
+  // Everything else runs clean, and says so the same way.
+  //
+  // A real class, not :not(.will-fail):not(.may-fail). Those two :not() arguments
+  // count toward specificity, so that selector outranked .on by a class and kept
+  // its background-image on the selected chip, while .on's background shorthand
+  // still reset the colour to transparent. The result was near-black label text
+  // on the dark panel, which is unreadable.
+  // Green, and not the house teal. Teal is what Shoebox uses for its own
+  // furniture, so a teal hatch says "this is one of ours" rather than "this one
+  // comes back clean". The chips run their own three-colour system against the
+  // diagram's: green, amber, red, which is the one everybody already reads.
+  &.wont-fail {
+    border-color: rgba(74, 222, 128, 0.4);
+    background-color: rgba(74, 222, 128, 0.05);
+    background-image:
+      repeating-linear-gradient(0deg, rgba(74, 222, 128, 0.4) 0 1px, transparent 1px 7px);
+
+    &:hover { color: #86efac; border-color: rgba(74, 222, 128, 0.9); }
+  }
+
+  // Selected wins outright. The solid fill already says which one is loaded, and
+  // a pattern showing through it only muddies the one chip that has to be
+  // unmistakable.
+  &.on,
+  &.on.wont-fail,
+  &.on.will-fail,
+  &.on.may-fail {
+    color: #04121a;
+    background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+    border-color: transparent;
+    box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 4px 14px rgba(47, 212, 196, 0.28);
+  }
+}
+
+.examples .hint { margin: 0.75rem 0 0; }
+
+.split {
+  display: grid;
+  // Not an even split. The text is fixed-width monospace and stops needing room
+  // at some point; the picture never does, because it is the thing being read.
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 1rem;
+
+  @media (max-width: 900px) { grid-template-columns: 1fr; }
+}
+
+// Graph paper. The pane is where you look at a system you just sketched, so it
+// should read as the surface you sketched it on. Faint enough that the diagram
+// stays the loudest thing: the grid is at 5% and the diagram's own strokes are
+// full teal.
+//
+// Layer order is paint order, first on top, so the glow sits over the grid and
+// the grid over the panel fill. The 32px pitch is arbitrary but matched to the
+// node heights, which stops the boxes looking like they float between rules.
+$graph-paper:
+  radial-gradient(520px 240px at 50% 0%, rgba(47, 212, 196, 0.10), transparent 70%),
+  repeating-linear-gradient(0deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px),
+  repeating-linear-gradient(90deg, rgba(93, 242, 226, 0.05) 0 1px, transparent 1px 32px);
+
+.viewer {
+  background: $graph-paper, linear-gradient(180deg, rgba(18, 32, 47, 0.92), rgba(11, 22, 34, 0.92));
+}
+
+.viewer .render {
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+
+  // ::ng-deep, not :global. The mermaid SVG is assigned with innerHTML after
+  // Angular has stamped its encapsulation attributes, so a plain scoped selector
+  // never matches it. :global is not an Angular selector at all and silently
+  // matched nothing, which left the SVG unconstrained.
+  //
+  // width, not just max-width. max-width alone only ever caps, so a wide and flat
+  // flowchart rendered at its natural 540px sat marooned in a pane twice that,
+  // with six-pixel labels. The !important is not decoration: mermaid writes an
+  // inline max-width of the natural size onto the SVG element, and an inline
+  // style cannot be beaten any other way. preserveAspectRatio does the rest, so
+  // the graph fits and centers rather than stretching.
+  ::ng-deep svg {
+    width: 100%;
+    max-width: none !important;
+    height: auto;
+    max-height: 100%;
+    display: block;
+  }
+
+  // Every edge marches toward its target, always. Mermaid draws each path from
+  // source to target, so a negative dashoffset runs the right way on its own and
+  // no per-edge direction has to be worked out. Carried over from the old chaos
+  // sandbox, which did the same thing with hand-placed lines.
+  //
+  // Broken edges keep the dasharray linkStyle gives them, since an inline style
+  // beats this, and they march in magenta. That is deliberate: a dead call that
+  // is still visibly being attempted reads worse than a static one, which is
+  // what it should read as.
+  //
+  // The !important is the same story as max-width above. Mermaid scopes its own
+  // rules by the diagram's id, so `#shoebox-graph .edge-pattern-solid` outranks
+  // anything a component stylesheet can write, and it sets stroke-dasharray to 0.
+  // Without this the animation still runs on every edge, offset and all, but a
+  // solid line with a moving dash offset looks exactly like a solid line: only
+  // the broken edge appeared to march, because linkStyle had given it a dash
+  // pattern inline.
+  // The burst a refused call leaves behind. Expands and fades once, then the
+  // whole layer is removed, so nothing accumulates across runs.
+  ::ng-deep .span-flight-burst {
+    animation: shoebox-burst 420ms ease-out forwards;
+  }
+
+  ::ng-deep svg .flowchart-link {
+    stroke-dasharray: 5 5 !important;
+    animation: shoebox-traffic 1s linear infinite;
+  }
+}
+
+@keyframes shoebox-traffic {
+  to { stroke-dashoffset: -10; }
+}
+
+@keyframes shoebox-burst {
+  from { r: 5; opacity: 0.9; stroke-width: 2; }
+  to   { r: 18; opacity: 0; stroke-width: 0.5; }
+}
+
+// The global reduced-motion rule deliberately excludes the SVG subtree, because
+// reaching inside it with transition-duration wrecks mermaid's layout. So the
+// opt-out has to be stated here instead, and only animation is touched.
+@media (prefers-reduced-motion: reduce) {
+  .viewer .render ::ng-deep svg .flowchart-link { animation: none; }
+}
+
+.panelhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+
+  label { margin-bottom: 0.5rem; }
+}
+
+.headactions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+
+// Smaller than the one anchoring the control row: this one is sitting in a
+// heading, not holding down the page.
+button.transport.in-head {
+  width: 34px;
+  height: 34px;
+
+  svg { width: 15px; height: 15px; }
+}
+
+// Next to a filled teal circle, a border at --line reads as no border at all,
+// so the pair looked like one button and one piece of text. Same outline weight
+// as the play control it now sits beside.
+button.expand {
+  flex: none;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid rgba(143, 168, 186, 0.45);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+}
+
+// Full screen without depending on the Fullscreen API. When the browser grants
+// real full screen this is what styles the element inside it; when it refuses,
+// this is the whole feature. Escape closes either one.
+.panel.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  margin: 0;
+  border-radius: 0;
+  padding: 1rem 1.25rem;
+  background: var(--navy);
+  display: flex;
+  flex-direction: column;
+
+  .panelhead { flex: none; }
+  .cheatsheet { flex: none; }
+
+  // Full screen was flattening the paper. .panel.is-expanded sets a flat navy
+  // background and weighs two classes against .viewer's one, so it won and took
+  // the grid with it. Restated at equal weight, later in the file, over an opaque
+  // base since there is no page showing through any more.
+  &.viewer { background: $graph-paper, linear-gradient(180deg, var(--navy), var(--navy)); }
+
+  // min-height: 0, or the flex child refuses to shrink below its content and the
+  // panel overflows the viewport instead of the content fitting inside it.
+  textarea, .render { flex: 1 1 auto; min-height: 0; }
+  textarea { resize: none; }
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 0;
+  border-radius: 6px;
+  padding: 0.65rem 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+// One request per press, and you can wind it back to the start. A transport is
+// the honest control for that, and it says "nothing moves until you press it"
+// better than a word does.
+button.transport {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+
+  svg { width: 20px; height: 20px; fill: currentColor; }
+
+  &:active { transform: translateY(0) scale(0.96); }
+}
+
+button.transport.play {
+  background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+  color: #04121a;
+  box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.35), 0 6px 20px rgba(47, 212, 196, 0.28);
+
+  // The play triangle is optically off-centre in its own box, so nudge it back.
+  svg { margin-left: 2px; }
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgba(93, 242, 226, 0.5), 0 10px 26px rgba(47, 212, 196, 0.38);
+  }
+}
+
+button.transport.rewind {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+
+  &:hover { color: var(--teal-bright); border-color: var(--teal); }
+}
+.runcount { color: var(--muted); }
+.otlp { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
+
+// Sits at the end of the control row, after the line saying where this instance
+// exports. That is the moment the question occurs to somebody: they have just
+// watched it work and want it pointed at their own backend. Goes to the README's
+// Running it section, which covers local and deployed both.
+a.cta {
+  flex: none;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(47, 212, 196, 0.45);
+  color: var(--teal);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    color: #04121a;
+    background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+    border-color: transparent;
+    box-shadow: 0 6px 18px rgba(47, 212, 196, 0.3);
+  }
+}
+
+.stats {
+  list-style: none;
+  display: flex;
+  gap: 1.5rem;
+  padding: 0;
+  margin: 0 0 0.75rem;
+
+  li { display: flex; flex-direction: column; }
+  li span { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); }
+  li strong { font-size: 1.4rem; }
+  li.bad strong { color: var(--magenta); text-shadow: 0 0 18px rgba(255, 45, 111, 0.45); }
+}
+
+.served code {
+  margin-right: 0.4rem;
+  background: var(--navy);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+}
+
+.cheatsheet {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+
+  summary { cursor: pointer; color: var(--teal); }
+  table { margin-top: 0.5rem; }
+  td:first-child { width: 15rem; }
+}
+
+code { font-family: ui-monospace, Consolas, monospace; }
+.hint, .note { color: var(--muted); font-size: 0.88rem; }
+.error { color: var(--magenta); font-size: 0.88rem; }
+.urlwarning { color: var(--magenta); font-size: 0.88rem; }
+
+// Outside the box, because it is about the tool rather than a thing in the box,
+// but tracking the box rather than the viewport: same max-width, same centring,
+// and indented by the wall plus the floor's own padding so it starts on the same
+// vertical as the panels above it instead of flush against the window.
+footer {
+  max-width: min(96vw, 1680px);
+  margin: 0 auto 3rem;
+  padding: 1rem calc(26px + 1.5rem) 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--line);
+
+  // No cap. A measure set in ch is a measure set in the font's own size, and at
+  // 0.85rem it kept coming out around 800px inside a much wider box: two short
+  // lines with half the width empty beside them, which reads as a mistake rather
+  // than as typography. The footer is three lines of text; letting it fill is
+  // the lesser evil.
+  p { max-width: none; }
+  a { color: var(--teal); }
+}

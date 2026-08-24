@@ -1,0 +1,54 @@
+// The brand lives here, once. Components consume these tokens and define none
+// of their own, so a palette change is a one-file change.
+//
+// Palette per the house banner system: deep navy ground, teal and cyan doing the
+// work, magenta reserved for the thing that is broken. Magenta is load-bearing in
+// this app -- it is how a severed edge reads at a glance -- so it is never used
+// for decoration.
+:root {
+  --navy-deep: #060f18;
+  --navy: #0b1622;
+  --panel: #12202f;
+  --line: #1e3247;
+  --teal: #2fd4c4;
+  --teal-bright: #5df2e2;
+  --magenta: #ff2d6f;
+  --ink: #e8f1f6;
+  --muted: #8fa8ba;
+
+  --mono: "JetBrains Mono", "Cascadia Code", SFMono-Regular, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--navy-deep);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: var(--teal); text-decoration: none; }
+a:hover { color: var(--teal-bright); }
+
+// Respect the setting. The glows and lifts here are decoration, and someone who
+// asked the OS to stop moving things should not have to argue with a demo app.
+// The :not(svg) matters and is not defensive noise. A blanket
+// transition-duration override reaches inside the rendered mermaid SVG, and the
+// graph then lays out about forty times too large -- nodes come out the right
+// size but two thousand pixels apart, so the whole diagram scales down to
+// hairlines. Verified by bisection: animation-duration and
+// animation-iteration-count are both harmless, transition-duration alone does
+// it, and excluding the SVG subtree fixes it.
+@media (prefers-reduced-motion: reduce) {
+  *:not(svg):not(svg *) {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
