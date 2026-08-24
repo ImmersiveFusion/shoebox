@@ -16,15 +16,20 @@
       <div class="example-groups">
         <div class="example-group" *ngFor="let group of groups">
           <span class="group-name">{{ group }}</span>
-          <button type="button" class="chip"
-                  *ngFor="let example of examplesIn(group)"
-                  [class.on]="selectedExampleId === example.id"
-                [class.will-fail]="outcomeOf(example) === 'always'"
-                [class.may-fail]="outcomeOf(example) === 'sometimes'"
-                [class.wont-fail]="outcomeOf(example) === 'healthy'"
-                  [attr.aria-pressed]="selectedExampleId === example.id"
-                  [title]="example.description"
-                  (click)="loadExample(example.id)">{{ example.label }}</button>
+          <!-- The chips wrap inside their own column. As siblings of the label they
+               wrapped to the row's left edge instead, so an overflowing chip sat
+               underneath the label looking like it belonged to nothing. -->
+          <div class="chips">
+            <button type="button" class="chip"
+                    *ngFor="let example of examplesIn(group)"
+                    [class.on]="selectedExampleId === example.id"
+                    [class.will-fail]="outcomeOf(example) === 'always'"
+                    [class.may-fail]="outcomeOf(example) === 'sometimes'"
+                    [class.wont-fail]="outcomeOf(example) === 'healthy'"
+                    [attr.aria-pressed]="selectedExampleId === example.id"
+                    [title]="example.description"
+                    (click)="loadExample(example.id)">{{ example.label }}</button>
+          </div>
         </div>
       </div>
 
