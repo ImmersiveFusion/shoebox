@@ -64,7 +64,7 @@ that destination; the trace can only show you that nothing did. Put the consumer
 back and the phantom disappears, which is the point.
 
 **Which means a queue needs a far side.** Draw `orders --> q[[Job Queue]]` and stop
-there, and the run publishes to a destination nothing receives — the same telemetry
+there, and the run publishes to a destination nothing receives: the same telemetry
 a declared phantom produces, span for span, so a backend reports it unconsumed
 without anyone having written the word. A datastore may be the last thing in a
 diagram, because a trace only ever learns about one from its caller. A queue may
@@ -262,11 +262,11 @@ than with anything about your change. `dotnet msbuild -t:Compile` type-checks wi
 touching `bin/`; for anything that has to actually run, copy the project to a scratch
 directory outside the tree.
 
-Which leads to the rule worth more than the other five: **if the claim is about what the
+Which leads to the rule worth more than the other six: **if the claim is about what the
 telemetry contains, print the telemetry.** A session once went seven rounds reading code
 for a defect that one pass of printing every emitted `service.name` found immediately.
-`tests/Shoebox.Api.UnitTests/Run/QueueShapeDumpTests.cs` is where that lives now — extend
-it before reaching for a throwaway harness.
+`tests/Shoebox.Api.UnitTests/Run/QueueShapeDumpTests.cs` is where that lives now.
+Extend it before reaching for a throwaway harness.
 
 Adding an example must never require code. `examples.ts` is pure data. If a new
 scenario needs a code change, the design has gone wrong.
