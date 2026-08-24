@@ -5,13 +5,13 @@ All SE decisions require human review and professional engineering judgment.
 Not for use in mission-critical decisions without SME validation.
 ---
 
-# Verification Cross-Reference Matrix: OpenTelemetry Semantic Convention Conformance — Snowglobe & Shoebox
+# Verification Cross-Reference Matrix: OpenTelemetry Semantic Convention Conformance in Snowglobe and Shoebox
 
 > **Project:** OTEL-CONF
 > **Entry:** e-001
 > **Criticality:** C3
 > **Date:** 2026-08-23
-> **Status:** FAIL — Shoebox's half remediated 2026-08-23, Snowglobe's half outstanding. See the addendum below.
+> **Status:** FAIL. Shoebox's half remediated 2026-08-23, Snowglobe's half outstanding. See the addendum below.
 > **NASA Processes:** NPR 7123.1D Process 7 (Product Verification)
 
 ---
@@ -48,7 +48,7 @@ Every Shoebox-side defect in this report has shipped a fix, each with a test beh
   this a wrong value on a conformant key rather than a cosmetic one. Now read off the
   label, registered values only, defaulting to `rabbitmq`. The consequence was larger than
   the attribute: a reader keys a messaging node on (system, destination) and labels it with
-  the system, so every queue in every diagram rendered under one name — see
+  the system, so every queue in every diagram rendered under one name. See
   [`../analysis/phantom-detect-e-001-rabbitmq-phantom.md`](../analysis/phantom-detect-e-001-rabbitmq-phantom.md) §2.1.
 
 ### Recommendation withdrawn: span Links for producer/consumer
@@ -64,8 +64,8 @@ half of #16 stands and has shipped; the Links half should not be implemented.
 
 ### New finding: fixing Snowglobe's messaging names will break the live grid
 
-The consuming side — `PhantomDetectorControl.BuildMessagingKey` in
-`IF.APM.App.Unity.HDRP` — reads the deprecated `messaging.destination`, falling back to a
+The consuming side (`PhantomDetectorControl.BuildMessagingKey` in
+`IF.APM.App.Unity.HDRP`) reads the deprecated `messaging.destination`, falling back to a
 legacy `message.destination`, and **never reads `messaging.destination.name`**.
 
 That is why Snowglobe's phantom grid works today: Snowglobe emits the old name, which is
@@ -74,13 +74,13 @@ the only name the consumer can see. Shoebox dual-emits both spellings as a worka
 **Therefore defect #8 (Snowglobe's bare `messaging.destination`) has a prerequisite.**
 Fix the consumer's key builder to read `messaging.destination.name` *first* before
 renaming anything in Snowglobe, or the rename will silently take the live demo down.
-Full detail in [`../analysis/phantom-detect-e-001-rabbitmq-phantom.md`](../analysis/phantom-detect-e-001-rabbitmq-phantom.md) §3.1.
+Full detail in [`../analysis/phantom-detect-e-001-rabbitmq-phantom.md`](../analysis/phantom-detect-e-001-rabbitmq-phantom.md) §4.1.
 
 ### New finding: where the invalid `publish` enum value came from
 
 `IF.APM.OpenTelemetry.Conventions` (in `IF.APM.Ingestion/src/SDK/DotNet/`) is otherwise
 current and correctly marks the deprecated names `[Obsolete]`. Its doc comment on
-`MessagingOperationType` reads *"e.g., publish, receive, process"* — and `publish` is not
+`MessagingOperationType` reads *"e.g., publish, receive, process"*, and `publish` is not
 a member of that enum. That comment is IntelliSense-visible at every call site, and is the
 most plausible source of defect #5. **Fix the comment**, or the same defect will be
 written again by the next person who trusts the tooltip.

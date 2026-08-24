@@ -1,10 +1,10 @@
-# Investigation — RabbitMQ Reading as a Phantom in DeepCube
+# Investigation: RabbitMQ Reading as a Phantom in DeepCube
 
 **PS ID:** phantom-detect | **Entry ID:** e-001 | **Criticality:** C2
 **Opened:** 2026-08-23 | **Status:** CAUSE IDENTIFIED 2026-08-23, one fix shipped, one
 behaviour documented rather than changed
 **Scope boundary:** This document records the observation, what it turned out to be, the
-two residue effects that can still fake it, and the dead ends already paid for.
+three things that can still fake it, and the dead ends already paid for.
 
 ---
 
@@ -16,8 +16,8 @@ node** in the DeepCube grid while looking at Shoebox output.
 The original version of this document listed two suspects and asserted no cause, because
 the graph had never been observed directly and seven successive inferences from reading
 source had been wrong (§6). **Section 2 replaces that with a measured answer**, arrived at
-by printing the telemetry (§7) rather than by reading more code. Sections 3 onward are
-unchanged and remain true.
+by printing the telemetry (§7) rather than by reading more code. Sections 4 onward are
+unchanged and remain true. §3.3 was added after that restructure.
 
 ---
 
@@ -28,7 +28,7 @@ Two independent things, both confirmed by running the emitter and printing every
 ### 2.1 Every queue node in the grid is labelled after the broker
 
 A messaging dependency node is keyed `{messaging.system}-{destination}`
-(`DependencyKeyResolver.ForMessaging`), and its tags are built system-first —
+(`DependencyKeyResolver.ForMessaging`), and its tags are built system-first:
 `GetDependencyFacilityKeys` parses `messaging.system` and then `messaging.destination`
 into `keyBuilder.Parts`, which becomes `GenericFacilityControl.Tags`, whose setter does
 `ExitPortalLabel.text = _tags[0]`.
@@ -36,7 +36,7 @@ into `keyBuilder.Parts`, which becomes `GenericFacilityControl.Tags`, whose sett
 **The visible name of every queue node is therefore `messaging.system`, never the
 destination.** And Shoebox hardcoded `messaging.system = "rabbitmq"` for every queue
 regardless of the label on it. A queue called `order.shipped`, or Kafka, still rendered as
-**rabbitmq** — so *any* queue going dark read as "RabbitMQ turned into a phantom".
+**rabbitmq**, so *any* queue going dark read as "RabbitMQ turned into a phantom".
 
 The same defect had already been found and fixed on the queue's own span (see the comment
 on `SemanticTags`'s `PodKind.Queue` case, which says it "asserted rabbitmq for every queue
@@ -49,7 +49,7 @@ names none.
 
 `PublishAndDeliver` emits the PRODUCER span unconditionally and then walks the consumer
 edges. Draw a queue as the last node and there are no consumer edges to walk, so the run
-emits a publish with no receive — which is, span for span, what a declared
+emits a publish with no receive, which is, span for span, what a declared
 `-->|phantom|` emits. Printed side by side:
 
 ```text
@@ -66,8 +66,8 @@ node, because a trace only ever learns about a datastore from its caller. `api -
 as a leaf goes dark, because a queue has a far side and the whole reason to draw one is
 what happens over there.
 
-**Not fixed in the emitter, deliberately.** The publish is honest — the caller really did
-publish — and dropping the span would leave an arrow in the diagram with nothing behind
+**Not fixed in the emitter, deliberately.** The publish is honest (the caller really did
+publish) and dropping the span would leave an arrow in the diagram with nothing behind
 it. Emitting it as a CLIENT span to dodge HP-3 would be worse: semconv maps
 `messaging.operation.type = send` to PRODUCER, so that trades a surprise for a
 fabrication, in a tool whose whole claim is that nothing is invented. What was missing was
@@ -77,18 +77,20 @@ which pins the equivalence rather than papering over it.
 
 ---
 
-## 3. Two residue effects that can still fake this
+## 3. Three things that can still fake this
 
-Neither was the cause, both are real, and both will waste an hour if you do not know them.
-Check them before believing any future observation of a phantom.
+None of them was the cause, all three are real, and each will waste an hour if you do not
+know it. Check them before believing any future observation of a phantom. The first two
+are stale state left over from an earlier run; the third is a timing behaviour of the
+consuming side that makes a healthy queue look absent on the first fire.
 
 ### 3.1 A phantom node never un-phantoms itself
 
 `ServiceDiagnostics.TryDemoteDependencyPhantom(key)` has exactly two call sites, and
 both are arrival handlers:
 
-- `PhantomDetectorControl.cs:165` — in `RecordConsumer`, keyed on the messaging destination
-- `PhantomDetectorControl.cs:214` — in `RecordServer`, keyed on the host
+- `PhantomDetectorControl.cs:165`, in `RecordConsumer`, keyed on the messaging destination
+- `PhantomDetectorControl.cs:214`, in `RecordServer`, keyed on the host
 
 A node therefore demotes **only when a span arrives at that node's key**. Nothing ages a
 phantom out, and nothing re-evaluates one on a later scan. Shoebox no longer emits
@@ -104,7 +106,7 @@ observation was a residue of an earlier build.
 `readDiagramFromUrl()` (`src/Shoebox.Spa/src/app/shoebox/diagram-url.ts:59`) reads
 `window.location.hash` and wins over the default example
 (`shoebox.component.ts:83`). A browser tab opened earlier in a session is therefore
-still running **whatever diagram was in the address bar when it was opened** — including
+still running **whatever diagram was in the address bar when it was opened**, including
 the older one where `rabbit[[RabbitMQ]]` was a terminal queue with nothing consuming it.
 
 That diagram *should* produce an unconsumed destination. That is the feature working.
@@ -151,7 +153,7 @@ moments:
 
 | When | What happens |
 |---|---|
-| First fire, T+0 | `IndexProducer` records the destination and the 60s promotion clock starts — `SpanObserved` is not gated on warming. The node does not exist yet. |
+| First fire, T+0 | `IndexProducer` records the destination and the 60s promotion clock starts; `SpanObserved` is not gated on warming. The node does not exist yet. |
 | Second fire, T+n | The queue node is created, healthy, by the ordinary dependency path. |
 | T+60 | The scan marks that node dark; or, if there was never a second fire, `PromoteStaleProducers` mints it directly as a phantom through its fallback. |
 
@@ -192,17 +194,17 @@ a check made inside the first minute proves nothing.
 
 1. **`BuildMessagingKey` never reads `messaging.destination.name`.** It reads the
    deprecated `messaging.destination`, falling back to a legacy `message.destination`
-   (`:334`) — and its own comment calls the deprecated spelling "the OTel-standard" one.
+   (`:334`), and its own comment calls the deprecated spelling "the OTel-standard" one.
    Shoebox dual-emits both spellings as a workaround (`TopologyRunner.cs:330` and `:340`).
 
    **This is also why Snowglobe's phantom grid works today**: Snowglobe emits the old
-   name. That makes it a sequencing hazard, not merely a defect — **modernising
+   name. That makes it a sequencing hazard, not merely a defect: **modernising
    Snowglobe's messaging attributes without fixing this line first will break the live
    grid.** See the remediation-status addendum in
    [`../verification/otel-conf-e-001-semconv-vcrm.md`](../verification/otel-conf-e-001-semconv-vcrm.md).
 
 2. **HP-4 never calls `TryMarkDependencyPhantom`.** The producer path marks an existing
-   node dark; the client path treats an existing facility as a reason to do nothing —
+   node dark; the client path treats an existing facility as a reason to do nothing,
    at index time (`:181`, `TryGetFacility` then return) and again in the late guard
    (`:296`, `TryGetFacility` then continue). Any peer that already has a facility node,
    which includes every peer the dependency pass has already walked, has therefore always
@@ -225,7 +227,7 @@ where it is unambiguous (`TopologyRunner.cs:474`, external third-party calls). D
 
 ---
 
-## 6. Ruled out — do not spend the round again
+## 6. Ruled out: do not spend the round again
 
 Each of these was proposed, implemented or argued during the 2026-08-23 session and is
 wrong. They are recorded because most of them were plausible.
@@ -242,7 +244,7 @@ wrong. They are recorded because most of them were plausible.
   starts its own trace is a broken end-to-end view. Parent/child is correct here.
 - **Stopping terminal queues from getting producer semantics.** They then fell through to
   being walked as ordinary pods, acquired a `service.name`, and RabbitMQ was published as
-  a *service* — worse than the problem it solved.
+  a *service*, worse than the problem it solved.
 - **Trusting a running client's grid state across a rebuild.** See §3.1.
 - **Trusting a browser tab across a diagram change.** See §3.2.
 
@@ -250,8 +252,8 @@ wrong. They are recorded because most of them were plausible.
 
 ## 7. Method note: print the telemetry
 
-The category error that actually mattered — queues, datastores, caches and third parties
-being emitted as services, each with its own `service.name` — was found in one pass by
+The category error that actually mattered (queues, datastores, caches and third parties
+being emitted as services, each with its own `service.name`) was found in one pass by
 **building the emitter outside the repository and printing every `service.name` across
 every example**. The list had eleven entries and four of them were not services. Seven
 rounds of reading code had not found it.

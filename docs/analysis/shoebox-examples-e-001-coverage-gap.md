@@ -1,8 +1,8 @@
-# Coverage and Taxonomy Gap Analysis — Shoebox Example Set
+# Coverage and Taxonomy Gap Analysis: Shoebox Example Set
 
 **PS ID:** shoebox-examples | **Entry ID:** e-001 | **Criticality:** C2
 **Analysis type:** gap + risk (taxonomy) | **Method:** S-013 (Inversion, primary), S-004 (Pre-Mortem), S-012 (FMEA), S-003 (Steelman), S-010 (Self-Refine)
-**Scope boundary:** This document produces evidence, gaps, and ranked failure modes only. It does **not** select a final taxonomy — that decision belongs to the architect.
+**Scope boundary:** This document produces evidence, gaps, and ranked failure modes only. It does **not** select a final taxonomy; that decision belongs to the architect.
 
 ---
 
@@ -17,13 +17,22 @@ all still shipping. Every recommendation in §12 is still open, with one excepti
 **§3.1 item 18, E-005 and E-006 are now stale.** `Pod.DefaultLatencyMs` is no longer dead
 code. Spans are given start and end times from a modelled clock
 (`TopologyRunner.cs:142`, `:286`, `:373`), so a trace now has a readable shape instead of
-hairlines, and a refused call is deliberately the *fastest* thing in the trace at 2ms —
+hairlines, and a refused call is deliberately the *fastest* thing in the trace at 2ms,
 which is itself the tell worth teaching. **The prerequisite engineering fix named in §12's
 second bullet is therefore done**, and "latency as a lesson" is now a pure curriculum
 decision with no code blocking it.
 
-Everything else — the redundancy findings, the zero-coverage capabilities, and the FMEA
-scoring of the three candidate taxonomies — stands as written.
+Everything else (the redundancy findings, the zero-coverage capabilities, and the FMEA
+scoring of the three candidate taxonomies) stands as written.
+
+**Two things the body says that have since moved, neither of which changes a finding.**
+The example set was 16 when this was written and is 17 now: `phantom-service` was added
+with the `-->|phantom|` syntax, which did not exist at the time and so is absent from the
+21-capability inventory in §3.1. It closes none of the six zero-coverage gaps, all of
+which were re-checked against `examples.ts` on 2026-08-23 and are still zero. Read every
+"16" below as "the 16 examples that existed when this was written". Separately, the
+`README.md:NN` line citations in the body point into the pre-rewrite README and no longer
+land on what they name; the file paths and the `.cs`/`.ts` citations are unaffected.
 
 ---
 
