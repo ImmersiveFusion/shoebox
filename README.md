@@ -273,19 +273,19 @@ scenario needs a code change, the design has gone wrong.
 
 ## Status
 
-The rework goes to **[shoebox.deepcube.ai](https://shoebox.deepcube.ai)**, which
-becomes the link target for this project. It binds to the same App Service that
-[chaos.deepcube.ai](https://chaos.deepcube.ai/) already points at, so this is a
-hostname and a build, not new infrastructure.
+**Live at [shoebox.deepcube.ai](https://shoebox.deepcube.ai).** Paste a diagram,
+break something, fire one request, read what comes out. No account and no install,
+which is the whole promise, and it is kept.
 
-Two things in this repo still stand in the way, and neither is a setting: there is
-no Dockerfile, no workflow and no infrastructure-as-code here, and nothing copies
-the built front end into the API's `wwwroot`, so the API serves no page outside
-Development. Running it locally is still the only way to use it today.
+[chaos.deepcube.ai](https://chaos.deepcube.ai/) points at the same deployment, so a
+link somebody saved before the rework still lands on something current rather than
+on the old build that needed SQL Server and Redis.
 
-`chaos.deepcube.ai` is serving the previous version of this project, the one that
-needed SQL Server and Redis. It stays up until whoever gives the demo for real runs
-it on the new build and says it is as good or better.
+Deploys run from a release pipeline outside this repository, which is why there is
+no Dockerfile and no workflow in here to find. What is genuinely missing is
+continuous integration: the tests run when somebody runs them, not on every pull
+request, so a green tree here is a claim rather than something the repository
+checked.
 
 ## The family
 
