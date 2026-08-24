@@ -287,13 +287,6 @@ Development. Running it locally is still the only way to use it today.
 needed SQL Server and Redis. It stays up until whoever gives the demo for real runs
 it on the new build and says it is as good or better.
 
-One behaviour is unexplained rather than fixed: RabbitMQ has been observed still reading
-as a phantom in DeepCube after the emitter was corrected, and that was never reproduced
-under controlled conditions.
-[`docs/analysis/phantom-detect-e-001-rabbitmq-phantom.md`](docs/analysis/phantom-detect-e-001-rabbitmq-phantom.md)
-has the two things to check first, how the consuming side actually decides, and the dead
-ends already paid for. Read it before touching the phantom path.
-
 ## The family
 
 | | What it is |
