@@ -30,11 +30,12 @@ tells a stranger what your employer is building. Rename first, then paste.
 A visitor cannot redirect my telemetry. Where I export is decided by whoever deployed
 me (`GET /otlp/status` will tell you where), and nothing about a run can change it.
 
-## The four endpoints
+## The endpoints
 
 | Verb | Path | Purpose |
 |---|---|---|
 | POST | `/shoebox` | mint your shoebox id — do this once |
+| POST | `/share` | turn a diagram into a link a person can click |
 | POST | `/topology/parse` | read a diagram back without emitting anything |
 | POST | `/run?shoeboxId=…` | fire exactly one request through the diagram |
 | GET | `/otlp/status` | whether telemetry is going anywhere, and where |
@@ -239,8 +240,28 @@ never the query string. That is a privacy decision: a fragment never leaves the
 browser, so real service names stay out of server logs, CDN logs and `Referer`
 headers. Keep it under about 8000 characters or mail clients will truncate it.
 
-If you cannot deflate, do not fake it. Give the human the diagram text and tell them
-to paste it at https://shoebox.deepcube.ai — that works just as well and is honest.
+**You do not have to build that yourself, and you should not try.** Deflate is not
+something you can do in your head, and a guessed fragment opens on an empty diagram.
+Ask for the link instead:
+
+```
+POST /share
+{"diagram":"flowchart TD
+  a[Orders API] --> b[(Store)]","shoeboxId":"..."}
+
+-> {"url":"https://shoebox.deepcube.ai/?shoeboxId=...#d=...",
+    "tooLongForSomeClients":false,
+    "hint":null}
+```
+
+Free, emits nothing, paced with `/topology/parse` rather than with `/run`. Include the
+`shoeboxId` and whoever opens the link lands in the same shoebox, so their runs and
+yours carry the same `shoebox.id`; leave it out and they get a fresh one. If
+`tooLongForSomeClients` comes back true, say so rather than handing over a link that
+mail clients may truncate.
+
+Give the link to the person. It opens their diagram in the editor, rendered and ready
+to fire, which is a better answer than a code block they have to paste.
 
 ## Where the telemetry goes
 

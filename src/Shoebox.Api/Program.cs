@@ -2,6 +2,7 @@ using System.Net;
 using System.Threading.RateLimiting;
 using Shoebox.Api.Emit;
 using Shoebox.Api.Run;
+using Shoebox.Api.Share;
 using Shoebox.Api.Topology;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -130,7 +131,7 @@ builder.Services.AddRateLimiter(options =>
         // the endpoint a careful caller uses to check itself before firing, and
         // punishing that would teach exactly the wrong habit.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
-            IsPostTo(http, "/topology/parse")
+            IsPostTo(http, "/topology/parse") || IsPostTo(http, "/share")
                 ? RateLimitPartition.GetFixedWindowLimiter(
                     SourceKey(http),
                     _ => new FixedWindowRateLimiterOptions
@@ -266,6 +267,28 @@ app.MapPost("/run", (RunRequest request, TopologyRunner runner, HttpRequest http
     return Results.Ok(result);
 }).WithName("Run");
 
+// A link somebody can click, because the callers who most need one cannot build it: the fragment is
+// deflate-raw then base64url, and a model cannot deflate. Emits nothing, so it is paced with /parse
+// rather than with /run.
+//
+// The origin comes from the request rather than configuration, so a link handed out by a local
+// instance points at that instance. X-Forwarded-Proto first: behind App Service the inbound scheme
+// is http and a link built from it would hand somebody an http URL for an https site.
+app.MapPost("/share", (ShareRequest request, HttpRequest http) =>
+{
+    var scheme = http.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? http.Scheme;
+    var url = ShareLink.For($"{scheme}://{http.Host}", request.Diagram, request.ShoeboxId);
+
+    return Results.Ok(new
+    {
+        url,
+        tooLongForSomeClients = url.Length > ShareLink.LengthWarning,
+        hint = url.Length > ShareLink.LengthWarning
+            ? "over ~8000 characters; mail clients and chat apps may truncate it. Shrink the diagram."
+            : null,
+    });
+}).WithName("Share");
+
 // Says whether telemetry is actually going anywhere, so a user who sees no traces
 // can tell an unconfigured endpoint from a broken diagram.
 app.MapGet("/otlp/status", (PodTracerPool pool) => Results.Ok(new
@@ -298,3 +321,5 @@ app.Run();
 public record DiagramRequest(string Diagram);
 
 public record RunRequest(string Diagram, int RunIndex);
+
+public record ShareRequest(string Diagram, string? ShoeboxId);
