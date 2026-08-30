@@ -1,7 +1,7 @@
 // Global using directives
 
 global using Shoebox.Api;
-global using Shoebox.Api.Sandbox;
+global using Shoebox.Api.Session;
 global using Microsoft.AspNetCore.Mvc;
 global using Microsoft.Extensions.Options;
 global using OpenTelemetry.Exporter;

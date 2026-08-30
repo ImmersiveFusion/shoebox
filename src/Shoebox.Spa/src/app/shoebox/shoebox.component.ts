@@ -5,9 +5,9 @@ import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox
 import {
   URL_LENGTH_WARNING,
   readDiagramFromUrl,
-  readSandboxFromUrl,
+  readShoeboxFromUrl,
   writeDiagramToUrl,
-  writeSandboxToUrl,
+  writeShoeboxToUrl,
 } from './diagram-url';
 import { decorate } from './diagram-style';
 import { flyRun } from './span-flight';
@@ -43,7 +43,7 @@ export class ShoeboxComponent implements OnInit {
   readonly urlTooLong = signal(false);
 
   runIndex = 1;
-  sandboxId = '';
+  shoeboxId = '';
 
   /**
    * Which panel, if any, is filling the screen. Both panes are cramped by
@@ -92,16 +92,16 @@ export class ShoeboxComponent implements OnInit {
       this.selectedExampleId = '';
     }
 
-    // A link carries its sandbox as well as its diagram. Opening someone's link
-    // puts you in their sandbox, so both of you are firing into the same bucket
+    // A link carries its shoebox as well as its diagram. Opening someone's link
+    // puts you in their shoebox, so both of you are firing into the same bucket
     // and one filter on shoebox.id finds the lot.
-    this.sandboxId = readSandboxFromUrl() ?? '';
-    if (this.sandboxId) {
-      writeSandboxToUrl(this.sandboxId);
+    this.shoeboxId = readShoeboxFromUrl() ?? '';
+    if (this.shoeboxId) {
+      writeShoeboxToUrl(this.shoeboxId);
     } else {
-      this.service.createSandbox().subscribe(r => {
-        this.sandboxId = r.sandboxId;
-        writeSandboxToUrl(r.sandboxId);
+      this.service.createShoebox().subscribe(r => {
+        this.shoeboxId = r.shoeboxId;
+        writeShoeboxToUrl(r.shoeboxId);
       });
     }
 
@@ -141,7 +141,7 @@ export class ShoeboxComponent implements OnInit {
 
   /** Nothing moves until the user says so. This is the core mechanic. */
   fire(): void {
-    this.service.run(this.diagram, this.runIndex, this.sandboxId).subscribe(result => {
+    this.service.run(this.diagram, this.runIndex, this.shoeboxId).subscribe(result => {
       this.result.set(result);
       this.runIndex += 1;
 

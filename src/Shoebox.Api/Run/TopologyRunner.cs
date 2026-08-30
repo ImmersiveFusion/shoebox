@@ -38,7 +38,7 @@ public sealed class TopologyRunner
 
     public TopologyRunner(PodTracerPool pool) => _pool = pool;
 
-    public RunResult Run(Graph graph, int runIndex, string? sandboxId)
+    public RunResult Run(Graph graph, int runIndex, string? shoeboxId)
     {
         var entry = graph.Entry;
         if (entry is null)
@@ -48,12 +48,12 @@ public sealed class TopologyRunner
                 Array.Empty<Hop>());
         }
 
-        if (!string.IsNullOrWhiteSpace(sandboxId))
+        if (!string.IsNullOrWhiteSpace(shoeboxId))
         {
             // shoebox.id rides Baggage onto every span, which is also a live
             // demonstration of baggage propagation inside a tool whose job is
             // teaching people to read telemetry.
-            Baggage.SetBaggage(SandboxConstants.TagKey, sandboxId);
+            Baggage.SetBaggage(ShoeboxConstants.TagKey, shoeboxId);
         }
 
         // The simulated trace is its own trace, with the entry pod at the root.
@@ -147,7 +147,7 @@ public sealed class TopologyRunner
             state.RootTraceId ??= activity.TraceId.ToString();
             state.ServedBy.Add($"{pod.ServiceName}-{instance}");
 
-            activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+            activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
             activity.SetTag("service.instance.id", $"{pod.ServiceName}-{instance}");
             // A consumer is a messaging span and only a messaging span. It was
             // also carrying http.request.method, which says this service was
@@ -290,7 +290,7 @@ public sealed class TopologyRunner
             publish.SetEndTime(state.Clock.UtcDateTime);
             state.SpanCount++;
             state.RootTraceId ??= publish.TraceId.ToString();
-            publish.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+            publish.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
             publish.SetTag("service.instance.id", $"{producer.ServiceName}-{instance}");
             foreach (var (k, v) in MessagingTags(queue, "publish", "send", messageId)) publish.SetTag(k, v);
         }
@@ -433,7 +433,7 @@ public sealed class TopologyRunner
 
         activity.SetEndTime(state.Clock.UtcDateTime);
         state.SpanCount++;
-        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
         foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
     }
 
@@ -462,7 +462,7 @@ public sealed class TopologyRunner
         var reason = call.FailureReason ?? "call failed";
         activity.SetStatus(ActivityStatusCode.Error, reason);
         activity.SetTag("error.type", reason);
-        activity.SetTag(SandboxConstants.TagKey, Baggage.GetBaggage(SandboxConstants.TagKey));
+        activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
         foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
     }
 

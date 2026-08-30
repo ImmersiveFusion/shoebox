@@ -59,8 +59,8 @@ export class ShoeboxService {
   }
 
   /** Fires exactly one request. Nothing moves unless the user asks. */
-  run(diagram: string, runIndex: number, sandboxId: string): Observable<RunResult> {
-    return this.http.post<RunResult>(`/run?sandboxId=${encodeURIComponent(sandboxId)}`, {
+  run(diagram: string, runIndex: number, shoeboxId: string): Observable<RunResult> {
+    return this.http.post<RunResult>(`/run?shoeboxId=${encodeURIComponent(shoeboxId)}`, {
       diagram,
       runIndex,
     });
@@ -71,7 +71,7 @@ export class ShoeboxService {
     return this.http.get<OtlpStatus>('/otlp/status');
   }
 
-  createSandbox(): Observable<{ sandboxId: string }> {
-    return this.http.post<{ sandboxId: string }>('/sandbox', {});
+  createShoebox(): Observable<{ shoeboxId: string }> {
+    return this.http.post<{ shoeboxId: string }>('/shoebox', {});
   }
 }

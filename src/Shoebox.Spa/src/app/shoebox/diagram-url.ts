@@ -13,23 +13,23 @@
  * It costs nothing, because running is a POST: the server receives the diagram in
  * a request body when the user presses fire, never in a logged URL.
  *
- * The sandbox id stays in the query string, because the server does need that.
+ * The shoebox id stays in the query string, because the server does need that.
  */
 
 const PARAM = 'd';
-const SANDBOX_PARAM = 'sandboxId';
+const SHOEBOX_PARAM = 'shoeboxId';
 
-/** The sandbox this page is running in, if the link carried one. */
-export function readSandboxFromUrl(): string | null {
-  return new URLSearchParams(window.location.search).get(SANDBOX_PARAM);
+/** The shoebox this page is running in, if the link carried one. */
+export function readShoeboxFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get(SHOEBOX_PARAM);
 }
 
 /**
- * Puts the sandbox id in the address bar, so copying the URL copies the sandbox
+ * Puts the shoebox id in the address bar, so copying the URL copies the shoebox
  * along with the diagram.
  *
  * Without this the id was minted per visit and never written down, so a shared
- * link handed the next person a *different* sandbox: same diagram, same runs, and
+ * link handed the next person a *different* shoebox: same diagram, same runs, and
  * `shoebox.id` on their spans not matching yours, which is exactly the tag you
  * would filter a shared backend by. A link is meant to be a runnable repro, and a
  * repro whose telemetry lands somewhere you cannot see is not one.
@@ -38,11 +38,11 @@ export function readSandboxFromUrl(): string | null {
  * that belongs there: the server needs it on every run, and unlike the diagram it
  * is a random id that says nothing about anybody's system.
  */
-export function writeSandboxToUrl(sandboxId: string): void {
-  if (!sandboxId) return;
+export function writeShoeboxToUrl(shoeboxId: string): void {
+  if (!shoeboxId) return;
   const url = new URL(window.location.href);
-  if (url.searchParams.get(SANDBOX_PARAM) === sandboxId) return;
-  url.searchParams.set(SANDBOX_PARAM, sandboxId);
+  if (url.searchParams.get(SHOEBOX_PARAM) === shoeboxId) return;
+  url.searchParams.set(SHOEBOX_PARAM, shoeboxId);
   window.history.replaceState(null, '', url.toString());
 }
 

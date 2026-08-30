@@ -171,7 +171,7 @@ need are served rather than assumed:
 
 **https://shoebox.deepcube.ai/llms.txt**
 
-It covers minting a sandbox, the diagram language, every arrow form, firing, reading a
+It covers minting a shoebox, the diagram language, every arrow form, firing, reading a
 run back, the share-link format, and the pacing below.
 
 Writing it found a real hole. A model writes far more Mermaid than the parser used to
@@ -201,14 +201,14 @@ restated in every 429 alongside a `Retry-After`:
 
 | What | Limit |
 |---|---|
-| `POST /run` per sandbox | 5 in a row, then one every 5 minutes |
-| `POST /run` per source address | twice that, across every sandbox it mints |
-| `POST /sandbox` per source address | 5, then one every 5 minutes |
+| `POST /run` per shoebox | 5 in a row, then one every 5 minutes |
+| `POST /run` per source address | twice that, across every shoebox it mints |
+| `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` per source address | 60 a minute |
 
 The burst is deliberate: replica selection is round robin on `runIndex`, so seeing what
 `broken on #3` of five does takes five runs and should not be a twenty-five minute
-errand. The per-source layer exists because a sandbox id is minted by asking for one,
+errand. The per-source layer exists because a shoebox id is minted by asking for one,
 so a limit keyed on it alone is evaded by asking again.
 
 This is politeness enforcement, not abuse defence. A distributed slam is a job for the
@@ -249,9 +249,9 @@ and nothing fires.
 The fastest way to tell an API problem from a UI one:
 
 ```bash
-curl -X POST http://localhost:5168/sandbox
+curl -X POST http://localhost:5168/shoebox
 
-curl -X POST "http://localhost:5168/run?sandboxId=$ID" \
+curl -X POST "http://localhost:5168/run?shoeboxId=$ID" \
   -H "Content-Type: application/json" \
   -d '{"diagram":"flowchart LR\n  api[Orders API] -->|broken: wrong table| db[(SQL Server)]","runIndex":1}'
 ```
@@ -266,8 +266,8 @@ dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 65 tes
 ## How isolation works
 
 One shared instance serves everyone. Isolation is logical, not provisioned: each
-visitor gets a GUID `sandboxId`, it rides OpenTelemetry Baggage onto every span as
-`shoebox.id`, and per-sandbox state is held in memory and deliberately not
+visitor gets a GUID `shoeboxId`, it rides OpenTelemetry Baggage onto every span as
+`shoebox.id`, and per-shoebox state is held in memory and deliberately not
 persisted.
 
 That is a live demonstration of baggage propagation inside a tool for learning to

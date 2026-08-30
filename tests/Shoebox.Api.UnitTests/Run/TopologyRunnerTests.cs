@@ -26,7 +26,7 @@ namespace Shoebox.Api.UnitTests.Run
         public void TearDown() => _pool.Dispose();
 
         private RunResult Fire(string diagram, int runIndex) =>
-            _runner.Run(MermaidParser.Parse(diagram), runIndex, sandboxId: "test");
+            _runner.Run(MermaidParser.Parse(diagram), runIndex, shoeboxId: "test");
 
         private const string WorkerPermutation = @"
 flowchart LR
