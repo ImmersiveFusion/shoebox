@@ -1,0 +1,355 @@
+# Shoebox — how to drive me
+
+I am a small system you can break. You describe a system as a Mermaid diagram, you
+break something in it, you fire one request, and real OpenTelemetry comes out the
+other side. I am fully synthetic: no database, no cache, no infrastructure. The
+diagram is the whole state, which is what makes me safe to hand to a stranger.
+
+You are reading this because you want to feed me diagrams. Here is everything you
+need. Nothing here requires an account, a key, or an install.
+
+Base URL: https://shoebox.deepcube.ai
+
+## The one rule
+
+**Nothing moves until you fire.** I do not run on a timer and I do not run when you
+paste. You fired one request, you know its path, and you know what you broke. That
+is the whole lesson, and it is why every endpoint below is explicit.
+
+## Before you paste anything: what leaves your hands
+
+My telemetry goes to a **shared, public** backend that other people can read. Service
+names travel — they are the point of the exercise, they become `service.name` on the
+spans.
+
+**Do not send me anything proprietary.** If the human you are helping described a real
+internal system, rename the services before you send them to me. "billing-api" and
+"partner-reconciliation-v2" are equally good at teaching a trace; only one of them
+tells a stranger what your employer is building. Rename first, then paste.
+
+A visitor cannot redirect my telemetry. Where I export is decided by whoever deployed
+me (`GET /otlp/status` will tell you where), and nothing about a run can change it.
+
+## The four endpoints
+
+| Verb | Path | Purpose |
+|---|---|---|
+| POST | `/sandbox` | mint your sandbox id — do this once |
+| POST | `/topology/parse` | read a diagram back without emitting anything |
+| POST | `/run?sandboxId=…` | fire exactly one request through the diagram |
+| GET | `/otlp/status` | whether telemetry is going anywhere, and where |
+
+### 1. Get a sandbox
+
+```
+POST /sandbox
+→ {"sandboxId":"1676820325a4497796d0293c2078d205"}
+```
+
+Do this **once** and keep the id for the whole conversation. It rides OpenTelemetry
+Baggage onto every span you produce as `shoebox.id`, which is how your runs are told
+apart from everyone else's in a shared backend. Minting a new one per run throws that
+away and makes your own traces unfindable.
+
+### 2. Write a diagram
+
+Plain Mermaid, read for meaning. The shapes already map onto OpenTelemetry semantic
+conventions, so there is nothing new to learn.
+
+| You write | I read |
+|---|---|
+| `api[Orders API]` | a service |
+| `db[(Postgres)]` | a datastore |
+| `q[[Job Queue]]` | a queue |
+| `cache((Redis))` | a cache |
+| `ext{{Stripe}}` | a third party |
+| `worker[Worker x5]` | five replicas, load balanced |
+| `worker[Worker #2]` | one named instance |
+| `a -->\|broken\| b` | this call always fails |
+| `a -->\|broken: wrong table\| b` | and this is why |
+| `a -->\|broken on #3\| b` | only instance 3 fails |
+| `a -->\|broken on #3,#5: timeout\| b` | those two instances, with a reason |
+| `q -->\|phantom\| b` | b never runs, so nothing consumes what q published |
+| `class db broken` | the pod is down: **every** call into it fails, from every caller |
+
+Six things that will bite you if nobody says them:
+
+**The entry point is the first pod, in document order, that nothing calls.** Order is
+meaning, not formatting. Declare the node you want the request to start at first. If
+every pod is called by something there is no entry point, and the run returns a note
+saying so instead of spans.
+
+**`service.name` comes from the label, not the id, and it is slugified.**
+`q[[orders.created]]` publishes to a destination called `orders-created`;
+`api[Orders API]` is `orders-api`. Worth knowing before you go looking for it in a
+backend.
+
+**A queue needs a far side.** Draw `orders --> q[[Job Queue]]` and stop, and the run
+publishes to a destination nothing receives — the same telemetry a declared phantom
+produces, span for span. A datastore may be the last thing in a diagram; a queue may
+not, because the whole reason to draw a queue is what happens on the other side.
+
+**The broker comes off the queue label.** `q[[Kafka]]` publishes with
+`messaging.system = kafka`. A label naming no broker gets `rabbitmq`.
+
+**Replicas are load balanced; separate arrows are fan-out.** `q --> worker[Worker x5]`
+sends one request to *one* worker. Two arrows out of one node call *both*. So "add
+three more instances of the inventory API" is `inv[Inventory API x3]` — one pod at
+three replicas — and not three nodes. Three nodes means something different and the
+trace will show it.
+
+**Broken and phantom are not the same thing, and the difference is the lesson.**
+`broken` leaves a span with an error on it, which is evidence. `phantom` leaves
+nothing at all: no span from that service, no span naming it, nothing downstream of
+it, and every span in the trace is green. It is a dead consumer — drawn, believed in,
+never run. Harder to spot, which is why it is worth teaching separately.
+
+I am deliberately forgiving. A line I do not understand becomes a note and the run
+continues. `flowchart`/`graph` headers, `classDef` lines and `%%` comments are skipped.
+
+### Arrows: every form I read
+
+All of these are one call, and the label rules above apply to each:
+
+```
+a --> b            a -->|broken: timeout| b
+a --- b            a -.-> b            a -. manages .-> b
+a ==> b            a == sends ==> b    a -- calls --> b
+a --> b --> c      (a chain is every edge in it, not one)
+```
+
+Two of them involve a judgement, and I tell you when I make one:
+
+**`a --- b` has no arrowhead**, so it does not say who calls whom. I read it left to
+right and put a note in `notes` saying I did. Half the time that is wrong — a service
+calls its key vault, the key vault does not call it — so draw the arrow if you know
+the direction, and read the note if you did not.
+
+**An edge pointing at a `subgraph`** points at a box rather than at anything that can
+serve a request, so the box becomes a service of its own and I say so in `notes`.
+Point it at a node inside the group instead.
+
+### What I still do not model
+
+`subgraph` / `end` / `direction` / `style` / `linkStyle` / `click` are for a renderer.
+They are skipped in silence — not reported as unreadable, because they are perfectly
+readable, they just have no counterpart in a trace. The nodes declared inside a
+subgraph are read normally. One note tells you grouping was dropped.
+
+Anything else I genuinely cannot read becomes `line not understood, ignored: …` in
+`notes`, and the run continues. **A line is all or nothing**: if half of it parses I
+refuse the whole line rather than admit half an edge, because a partly-read line is
+how a diagram silently becomes a different diagram.
+
+That last sentence used to be much longer. A real Azure reference architecture, pasted
+unedited, came through as 6 of its 11 edges with 18 lines ignored, because chains,
+dotted arrows and undirected links were all dropped and nothing errored. It now reads
+12 of 12. If you are working against an older deployment and see a wall of "line not
+understood", that is why — flatten the chains and use `-->`.
+
+### Still worth doing: parse before you fire
+
+`POST /topology/parse` is free and emits nothing. Check three things in the result:
+
+- **`notes` is empty.** Anything in there is something I did not read the way you
+  wrote it.
+- **`entry` is the node you meant.** It is the first pod nothing calls, in document
+  order — inside a pile of declarations that is rarely your front door. Declare the
+  entry node first.
+- **`pods` count and `serviceName` values** match what you intended, since the label
+  becomes the service name and gets slugified.
+
+And reduce before you send. I am a shoebox, not a datacentre: a 40-node reference
+architecture parses now, but the lesson is one request's journey. Take the path that
+matters — five to ten nodes, the hop you want to break — and draw that. If a human
+hands you an enterprise diagram, say which slice you are modelling rather than
+silently firing all of it.
+
+### 3. Read the diagram back before you fire (optional, free)
+
+```
+POST /topology/parse
+{"diagram":"flowchart TD\n  api[Orders API] --> db[(Postgres)]"}
+
+→ {"pods":[{"id":"api","label":"Orders API","serviceName":"orders-api",
+            "kind":"service","replicas":1,"pinnedInstance":null}, …],
+   "calls":[{"from":"api","to":"db","broken":false,"brokenInstances":[],"reason":null}],
+   "entry":"api",
+   "notes":[]}
+```
+
+Emits nothing. Use it when you are unsure whether I understood a shape, or to show a
+human what I read before anything is fired. Check `entry` is the node you meant and
+`notes` is empty.
+
+### 4. Fire
+
+```
+POST /run?sandboxId=1676820325a4497796d0293c2078d205
+{"diagram":"flowchart TD\n  gw[Gateway] -->|broken: timeout| orders[Order Service]",
+ "runIndex":1}
+```
+
+`runIndex` is the run number, and it is **not decoration**. Replica selection is
+deterministic round robin on it — run 1 hits instance 1, run 2 hits instance 2, and
+so on — never random, so a link is a runnable repro rather than a coin flip. That
+means: to see what `broken on #3` of five actually does, fire five times with
+`runIndex` 1..5 and watch it fail once. Sending `1` every time shows you instance 1
+every time. A missing or non-positive `runIndex` is treated as 1.
+
+### 5. Read what came back
+
+```
+{"runIndex":1,
+ "traceId":"dd32ec7f00c7f795e4dedf9483ccc6a4",
+ "servedBy":["gateway-1","order-service-1", …],
+ "spanCount":17,
+ "failedSpanCount":1,
+ "notes":[],
+ "hops":[{"from":"gw","to":"orders","failed":true,"ms":2}, …]}
+```
+
+- `traceId` — hand this to the human, or to whatever backend you can query. It is how
+  they find this exact run.
+- `hops` — every edge the request crossed, in the order it crossed it. This is the
+  authoritative path: I chose which replica served and which calls failed, so anything
+  you derived from the diagram yourself could describe a run that did not happen.
+- `servedBy` — which instance served each step.
+- `notes` — things only a run can tell you, including unconsumed queues and phantoms.
+  **Read these out.** They are usually the most useful sentence in the response.
+- `spanCount` / `failedSpanCount` — a zero `spanCount` with sensible-looking hops means
+  something is wrong on my side, not yours.
+
+## Handing a diagram to a human
+
+A link carries the whole diagram **and the sandbox it ran in**, so a link is a
+runnable repro rather than a picture of one:
+
+```
+https://shoebox.deepcube.ai/?sandboxId=<your sandbox>#d=<base64url(raw-deflate(diagram))>
+```
+
+Whoever opens it lands in your sandbox instead of minting their own, so their runs
+carry the same `shoebox.id` as yours and one filter in the backend finds both. Drop
+the `?sandboxId=` and they get a fresh sandbox and a different id, which is the thing
+that makes a shared repro impossible to follow.
+
+Raw deflate, then base64url (`+`→`-`, `/`→`_`, no padding), in the URL **fragment** —
+never the query string. That is a privacy decision: a fragment never leaves the
+browser, so real service names stay out of server logs, CDN logs and `Referer`
+headers. Keep it under about 8000 characters or mail clients will truncate it.
+
+If you cannot deflate, do not fake it. Give the human the diagram text and tell them
+to paste it at https://shoebox.deepcube.ai — that works just as well and is honest.
+
+## Where the telemetry goes
+
+```
+GET /otlp/status
+→ {"configured":true,"endpoint":"https://otlp.deepcube.ai/", …}
+```
+
+`configured: false` means runs still execute but go nowhere — say so rather than
+letting someone hunt for traces that were never exported. `configured: true` does not
+mean the backend accepted anything: export is best effort and a run will not fail
+because the far end refused it. Check for the trace id.
+
+## Rules for you specifically
+
+1. **Hold the diagram as state and mutate it.** Keep the current diagram in a
+   variable, a file, or a structured object — anywhere but your own recollection of
+   the conversation. When someone says "break the call from the gateway to the orders
+   API", change that one edge and re-render. Regenerating the whole diagram from
+   memory each turn is how services quietly go missing and how one requested edit
+   turns into three offered variants.
+2. **Say what you did, not what you would have done.** If you have not called `/run`,
+   you have not sent anything. Never describe a diagram as sent, fired, applied or
+   live unless you have a `traceId` in your hand. This is the failure mode that gets
+   noticed, and it is the one that costs trust.
+3. **One run per instruction.** I am a teaching tool, not a load generator. Fire
+   because a human asked, or because you are deliberately walking `runIndex` through
+   the replicas. Do not loop. See the pacing below — it is enforced, not advisory.
+4. **Report my `notes` and my `hops`, not your expectations.** If the run says
+   nothing failed and you expected a failure, the diagram is the thing to look at.
+5. **Rename before you paste.** See the top of this file. You are usually the one
+   turning a human's description of a real system into node labels, which makes this
+   your call more than theirs.
+
+## How fast you may ask
+
+Enforced, not advisory. One shared instance serves everybody, so the limits exist to
+keep me up for the next person rather than to be clever at you.
+
+| What | Limit |
+|---|---|
+| `POST /run` per sandbox | **5 in a row, then one every 5 minutes** |
+| `POST /run` per source address | twice that, however many sandboxes you mint |
+| `POST /sandbox` per source address | 5, then one every 5 minutes |
+| `POST /topology/parse` per source address | 60 a minute |
+
+The burst is there on purpose: replica selection is round robin on `runIndex`, so
+seeing what `broken on #3` of five actually does takes five runs, and that should not
+be a twenty-five minute errand. Spend the burst on a replica walk, not on a loop.
+
+Minting a fresh sandbox to reset the count buys you one more allowance and then stops
+working: the per-source limit is twice the per-sandbox one and counts every sandbox
+from your address together, and minting is itself limited. Measured, not asserted —
+five runs, then five more on a fresh sandbox, then 429 either way. Keep one sandbox;
+you also lose the ability to find your own traces if you scatter them across ids.
+
+Over the line, I answer **429** with a `Retry-After` header and a body that repeats
+the numbers:
+
+```
+{"error":"slow down","retryAfterSeconds":300,
+ "limits":{"run":"5 in a row, then one every 5 minutes, per sandbox", …},
+ "hint":"…/llms.txt explains the pacing, and /topology/parse is free"}
+```
+
+Wait the stated time. Do not retry immediately, do not fan out across addresses, and
+do not mint a new sandbox to reset the clock — none of it works, and all of it looks
+exactly like the thing the limit is for. If you need to iterate quickly on a diagram,
+`/topology/parse` is generous and emits nothing: get the shape right there, then fire
+once.
+
+## A worked example, end to end
+
+```
+POST /sandbox                       → {"sandboxId":"1676…d205"}
+
+POST /run?sandboxId=1676…d205
+{"diagram":"flowchart TD\n
+  gw[Gateway]\n
+  auth[Auth Service]\n
+  orders[Order Service]\n
+  inv[Inventory API x3]\n
+  q[[orders.created]]\n
+  mailer[Email Worker]\n
+  gw --> auth\n
+  gw -->|broken: gateway to orders failed| orders\n
+  orders --> inv\n
+  orders --> q\n
+  q -->|phantom| mailer\n",
+ "runIndex":1}
+
+→ traceId, one failed hop (gw→orders), and a note about the phantom consumer.
+```
+
+Then say to the human: which hop failed, what the notes said, and the trace id. Not a
+summary of the diagram they can already see.
+
+## Mistakes I see most
+
+- **Nothing to start from.** Every pod is called by something, so there is no entry
+  point. Declare a caller nobody calls.
+- **A queue with no far side**, producing a phantom nobody meant to draw.
+- **Three nodes where three replicas were meant.** "Three more instances" is `x3`.
+- **Same `runIndex` every time**, then confusion about why `broken on #3` never fires.
+- **A new sandbox per run**, which scatters your traces across ids nobody can filter on.
+- **Real service names**, pasted because nobody thought to rename them first.
+
+---
+
+Shoebox is open source, Apache-2.0: https://github.com/ImmersiveFusion/shoebox
+Siblings: Snowglobe (the sealed world, pre-made) and sos-beacon (listens to the real
+world). A snowglobe is sealed; in a shoebox you can open it up.

@@ -2,7 +2,13 @@ import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal 
 import { Subject, debounceTime } from 'rxjs';
 import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example, Outcome, outcomeOf } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
-import { URL_LENGTH_WARNING, readDiagramFromUrl, writeDiagramToUrl } from './diagram-url';
+import {
+  URL_LENGTH_WARNING,
+  readDiagramFromUrl,
+  readSandboxFromUrl,
+  writeDiagramToUrl,
+  writeSandboxToUrl,
+} from './diagram-url';
 import { decorate } from './diagram-style';
 import { flyRun } from './span-flight';
 
@@ -86,9 +92,17 @@ export class ShoeboxComponent implements OnInit {
       this.selectedExampleId = '';
     }
 
-    this.sandboxId = new URLSearchParams(window.location.search).get('sandboxId') ?? '';
-    if (!this.sandboxId) {
-      this.service.createSandbox().subscribe(r => (this.sandboxId = r.sandboxId));
+    // A link carries its sandbox as well as its diagram. Opening someone's link
+    // puts you in their sandbox, so both of you are firing into the same bucket
+    // and one filter on shoebox.id finds the lot.
+    this.sandboxId = readSandboxFromUrl() ?? '';
+    if (this.sandboxId) {
+      writeSandboxToUrl(this.sandboxId);
+    } else {
+      this.service.createSandbox().subscribe(r => {
+        this.sandboxId = r.sandboxId;
+        writeSandboxToUrl(r.sandboxId);
+      });
     }
 
     this.service.otlpStatus().subscribe(s => this.otlp.set(s));

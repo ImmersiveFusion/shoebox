@@ -57,6 +57,15 @@
             </button>
           </span>
         </div>
+        <!-- Above the box, not in the footer. A footer is read after pasting, which
+             is too late for the one thing this is here to prevent. -->
+        <p class="disclaimer">
+          <strong>This is a public toy.</strong> Every run is fired as real telemetry into a
+          shared, public backend that other people can read, and your service names travel
+          with it &mdash; that is what makes them useful to look at. Do not paste anything
+          proprietary. Rename it first, then paste: a trace teaches exactly as well with
+          made-up names.
+        </p>
         <textarea id="diagram"
                   spellcheck="false"
                   [(ngModel)]="diagram"
@@ -179,8 +188,13 @@
 <footer>
   <p *ngIf="sandboxId">
     Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
-    onto every span as <code>sandbox.id</code>. That is a live demonstration of baggage
+    onto every span as <code>shoebox.id</code>. That is a live demonstration of baggage
     propagation, inside a tool for learning to read telemetry.
+  </p>
+  <p *ngIf="sandboxId">
+    It travels in this page's address, so a link you copy puts whoever opens it in the
+    same sandbox &mdash; same diagram, same <code>shoebox.id</code>, one filter finds both
+    your runs.
   </p>
   <p>
     Sibling to <a href="https://github.com/ImmersiveFusion/snowglobe">Snowglobe</a>,

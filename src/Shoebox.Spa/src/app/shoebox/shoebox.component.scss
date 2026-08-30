@@ -501,6 +501,22 @@ table {
 
 code { font-family: ui-monospace, Consolas, monospace; }
 .hint, .note { color: var(--muted); font-size: 0.88rem; }
+
+// Deliberately NOT magenta. Magenta is only ever damage in here, and a broken edge
+// has to stay the loudest thing on screen; a standing caution that never changes
+// would bleach it. Loud enough to read before pasting, quiet enough to stop being
+// noticed on the tenth visit.
+.disclaimer {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid var(--teal);
+  background: rgba(47, 212, 196, 0.07);
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+
+  strong { color: var(--text, #dceaf5); }
+}
 .error { color: var(--magenta); font-size: 0.88rem; }
 .urlwarning { color: var(--magenta); font-size: 0.88rem; }
 
