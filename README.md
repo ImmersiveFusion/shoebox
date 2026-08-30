@@ -204,7 +204,7 @@ restated in every 429 alongside a `Retry-After`:
 | `POST /run` per shoebox | 5 in a row, then one every 5 minutes |
 | `POST /run` per source address | twice that, across every shoebox it mints |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
-| `POST /topology/parse` per source address | 60 a minute |
+| `POST /topology/parse` and `POST /share` per source address | 60 a minute |
 
 The burst is deliberate: replica selection is round robin on `runIndex`, so seeing what
 `broken on #3` of five does takes five runs and should not be a twenty-five minute
