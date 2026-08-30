@@ -34,16 +34,16 @@ me (`GET /otlp/status` will tell you where), and nothing about a run can change 
 
 | Verb | Path | Purpose |
 |---|---|---|
-| POST | `/sandbox` | mint your sandbox id — do this once |
+| POST | `/shoebox` | mint your shoebox id — do this once |
 | POST | `/topology/parse` | read a diagram back without emitting anything |
-| POST | `/run?sandboxId=…` | fire exactly one request through the diagram |
+| POST | `/run?shoeboxId=…` | fire exactly one request through the diagram |
 | GET | `/otlp/status` | whether telemetry is going anywhere, and where |
 
-### 1. Get a sandbox
+### 1. Get a shoebox
 
 ```
-POST /sandbox
-→ {"sandboxId":"1676820325a4497796d0293c2078d205"}
+POST /shoebox
+→ {"shoeboxId":"1676820325a4497796d0293c2078d205"}
 ```
 
 Do this **once** and keep the id for the whole conversation. It rides OpenTelemetry
@@ -185,7 +185,7 @@ human what I read before anything is fired. Check `entry` is the node you meant 
 ### 4. Fire
 
 ```
-POST /run?sandboxId=1676820325a4497796d0293c2078d205
+POST /run?shoeboxId=1676820325a4497796d0293c2078d205
 {"diagram":"flowchart TD\n  gw[Gateway] -->|broken: timeout| orders[Order Service]",
  "runIndex":1}
 ```
@@ -222,16 +222,16 @@ every time. A missing or non-positive `runIndex` is treated as 1.
 
 ## Handing a diagram to a human
 
-A link carries the whole diagram **and the sandbox it ran in**, so a link is a
+A link carries the whole diagram **and the shoebox it ran in**, so a link is a
 runnable repro rather than a picture of one:
 
 ```
-https://shoebox.deepcube.ai/?sandboxId=<your sandbox>#d=<base64url(raw-deflate(diagram))>
+https://shoebox.deepcube.ai/?shoeboxId=<your shoebox>#d=<base64url(raw-deflate(diagram))>
 ```
 
-Whoever opens it lands in your sandbox instead of minting their own, so their runs
+Whoever opens it lands in your shoebox instead of minting their own, so their runs
 carry the same `shoebox.id` as yours and one filter in the backend finds both. Drop
-the `?sandboxId=` and they get a fresh sandbox and a different id, which is the thing
+the `?shoeboxId=` and they get a fresh shoebox and a different id, which is the thing
 that makes a shared repro impossible to follow.
 
 Raw deflate, then base64url (`+`→`-`, `/`→`_`, no padding), in the URL **fragment** —
@@ -282,19 +282,19 @@ keep me up for the next person rather than to be clever at you.
 
 | What | Limit |
 |---|---|
-| `POST /run` per sandbox | **5 in a row, then one every 5 minutes** |
-| `POST /run` per source address | twice that, however many sandboxes you mint |
-| `POST /sandbox` per source address | 5, then one every 5 minutes |
+| `POST /run` per shoebox | **5 in a row, then one every 5 minutes** |
+| `POST /run` per source address | twice that, however many shoeboxes you mint |
+| `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` per source address | 60 a minute |
 
 The burst is there on purpose: replica selection is round robin on `runIndex`, so
 seeing what `broken on #3` of five actually does takes five runs, and that should not
 be a twenty-five minute errand. Spend the burst on a replica walk, not on a loop.
 
-Minting a fresh sandbox to reset the count buys you one more allowance and then stops
-working: the per-source limit is twice the per-sandbox one and counts every sandbox
+Minting a fresh shoebox to reset the count buys you one more allowance and then stops
+working: the per-source limit is twice the per-shoebox one and counts every shoebox
 from your address together, and minting is itself limited. Measured, not asserted —
-five runs, then five more on a fresh sandbox, then 429 either way. Keep one sandbox;
+five runs, then five more on a fresh shoebox, then 429 either way. Keep one shoebox;
 you also lose the ability to find your own traces if you scatter them across ids.
 
 Over the line, I answer **429** with a `Retry-After` header and a body that repeats
@@ -302,12 +302,12 @@ the numbers:
 
 ```
 {"error":"slow down","retryAfterSeconds":300,
- "limits":{"run":"5 in a row, then one every 5 minutes, per sandbox", …},
+ "limits":{"run":"5 in a row, then one every 5 minutes, per shoebox", …},
  "hint":"…/llms.txt explains the pacing, and /topology/parse is free"}
 ```
 
 Wait the stated time. Do not retry immediately, do not fan out across addresses, and
-do not mint a new sandbox to reset the clock — none of it works, and all of it looks
+do not mint a new shoebox to reset the clock — none of it works, and all of it looks
 exactly like the thing the limit is for. If you need to iterate quickly on a diagram,
 `/topology/parse` is generous and emits nothing: get the shape right there, then fire
 once.
@@ -315,9 +315,9 @@ once.
 ## A worked example, end to end
 
 ```
-POST /sandbox                       → {"sandboxId":"1676…d205"}
+POST /shoebox                       → {"shoeboxId":"1676…d205"}
 
-POST /run?sandboxId=1676…d205
+POST /run?shoeboxId=1676…d205
 {"diagram":"flowchart TD\n
   gw[Gateway]\n
   auth[Auth Service]\n
@@ -345,7 +345,7 @@ summary of the diagram they can already see.
 - **A queue with no far side**, producing a phantom nobody meant to draw.
 - **Three nodes where three replicas were meant.** "Three more instances" is `x3`.
 - **Same `runIndex` every time**, then confusion about why `broken on #3` never fires.
-- **A new sandbox per run**, which scatters your traces across ids nobody can filter on.
+- **A new shoebox per run**, which scatters your traces across ids nobody can filter on.
 - **Real service names**, pasted because nobody thought to rename them first.
 
 ---

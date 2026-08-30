@@ -186,14 +186,14 @@
 </div>
 
 <footer>
-  <p *ngIf="sandboxId">
-    Your sandbox is <code>{{ sandboxId }}</code>, and it rides OpenTelemetry Baggage
+  <p *ngIf="shoeboxId">
+    Your shoebox is <code>{{ shoeboxId }}</code>, and it rides OpenTelemetry Baggage
     onto every span as <code>shoebox.id</code>. That is a live demonstration of baggage
     propagation, inside a tool for learning to read telemetry.
   </p>
-  <p *ngIf="sandboxId">
+  <p *ngIf="shoeboxId">
     It travels in this page's address, so a link you copy puts whoever opens it in the
-    same sandbox &mdash; same diagram, same <code>shoebox.id</code>, one filter finds both
+    same shoebox &mdash; same diagram, same <code>shoebox.id</code>, one filter finds both
     your runs.
   </p>
   <p>

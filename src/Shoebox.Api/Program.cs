@@ -11,12 +11,12 @@ builder.Services.AddCors();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddSingleton<SandboxMiddleware>();
+builder.Services.AddSingleton<ShoeboxMiddleware>();
 builder.Services.AddHttpContextAccessor();
 
 // ── Throttling ───────────────────────────────────────────────────────────────
 //
-// Two layers, because the obvious one is forgeable. A sandbox id is minted by
+// Two layers, because the obvious one is forgeable. A shoebox id is minted by
 // asking for one, so a limit keyed on it alone is evaded by asking again; the
 // second layer keys on where the request came from, which is what actually costs
 // an abuser something. Minting itself is limited for the same reason.
@@ -57,9 +57,9 @@ builder.Services.AddRateLimiter(options =>
             retryAfterSeconds = (int)Math.Ceiling(wait.TotalSeconds),
             limits = new
             {
-                run = $"{RunBurst} in a row, then one every {runPeriod.TotalMinutes:0} minutes, per sandbox",
-                source = "twice that from one address, however many sandboxes it mints",
-                sandbox = $"{RunBurst} new sandboxes, then one every {runPeriod.TotalMinutes:0} minutes, per address",
+                run = $"{RunBurst} in a row, then one every {runPeriod.TotalMinutes:0} minutes, per shoebox",
+                source = "twice that from one address, however many shoeboxes it mints",
+                shoebox = $"{RunBurst} new shoeboxes, then one every {runPeriod.TotalMinutes:0} minutes, per address",
                 parse = "60 a minute per address, and it emits nothing",
             },
             hint = "https://shoebox.deepcube.ai/llms.txt explains the pacing, and /topology/parse is free",
@@ -68,7 +68,7 @@ builder.Services.AddRateLimiter(options =>
 
     // Chained, not four separate endpoint policies. RequireRateLimiting does not
     // stack: calling it twice on one endpoint replaces the first policy rather than
-    // applying both, which was measured here -- a sandbox got six runs out of a
+    // applying both, which was measured here -- a shoebox got six runs out of a
     // five-token bucket because only the second policy was live. A chained global
     // limiter is the shape that actually applies more than one rule to a request.
     //
@@ -77,12 +77,12 @@ builder.Services.AddRateLimiter(options =>
     // reach this.
     options.GlobalLimiter = PartitionedRateLimiter.CreateChained(
 
-        // Per sender. Falls back to the source when no sandbox id was sent, so a
+        // Per sender. Falls back to the source when no shoebox id was sent, so a
         // caller cannot dodge this one by simply omitting the parameter.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
             IsPostTo(http, "/run")
                 ? RateLimitPartition.GetTokenBucketLimiter(
-                    http.Request.GetSandboxId() is { Length: > 0 } id ? $"sandbox:{id}" : SourceKey(http),
+                    http.Request.GetShoeboxId() is { Length: > 0 } id ? $"shoebox:{id}" : SourceKey(http),
                     _ => new TokenBucketRateLimiterOptions
                     {
                         TokenLimit = RunBurst,
@@ -93,9 +93,9 @@ builder.Services.AddRateLimiter(options =>
                     })
                 : RateLimitPartition.GetNoLimiter<string>("not-a-run")),
 
-        // Per source, across every sandbox it holds. Twice the sender allowance, so
+        // Per source, across every shoebox it holds. Twice the sender allowance, so
         // two colleagues behind one office address are not fighting each other, and
-        // minting a fresh sandbox per run buys one more allowance rather than an
+        // minting a fresh shoebox per run buys one more allowance rather than an
         // unlimited supply of them.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
             IsPostTo(http, "/run")
@@ -113,7 +113,7 @@ builder.Services.AddRateLimiter(options =>
 
         // Minting. The lever that makes the per-sender limit mean anything.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
-            IsPostTo(http, "/sandbox")
+            IsPostTo(http, "/shoebox")
                 ? RateLimitPartition.GetTokenBucketLimiter(
                     SourceKey(http),
                     _ => new TokenBucketRateLimiterOptions
@@ -209,7 +209,7 @@ else
 
 app.UseHttpsRedirection();
 app.UseRateLimiter();
-app.UseMiddleware<SandboxMiddleware>();
+app.UseMiddleware<ShoeboxMiddleware>();
 
 app.UseExceptionHandler(options =>
 {
@@ -220,12 +220,12 @@ app.UseExceptionHandler(options =>
     });
 });
 
-// Every visitor gets an isolated sandbox keyed by a GUID. This is what makes a
+// Every visitor gets an isolated shoebox keyed by a GUID. This is what makes a
 // public, no-account, no-install tool sustainable: one shared instance serves
 // everyone, isolated logically rather than by provisioning. It survives the
 // rewrite unchanged in principle.
-app.MapPost("/sandbox", () => Results.Ok(new { sandboxId = Guid.NewGuid().ToString("N") }))
-   .WithName("CreateSandbox");
+app.MapPost("/shoebox", () => Results.Ok(new { shoeboxId = Guid.NewGuid().ToString("N") }))
+   .WithName("CreateShoebox");
 
 // Parse only. Lets the UI render and report problems without emitting anything,
 // because nothing moves until the user presses fire.
@@ -262,7 +262,7 @@ app.MapPost("/topology/parse", (DiagramRequest request) =>
 app.MapPost("/run", (RunRequest request, TopologyRunner runner, HttpRequest http) =>
 {
     var graph = MermaidParser.Parse(request.Diagram);
-    var result = runner.Run(graph, request.RunIndex <= 0 ? 1 : request.RunIndex, http.GetSandboxId());
+    var result = runner.Run(graph, request.RunIndex <= 0 ? 1 : request.RunIndex, http.GetShoeboxId());
     return Results.Ok(result);
 }).WithName("Run");
 
@@ -275,7 +275,7 @@ app.MapGet("/otlp/status", (PodTracerPool pool) => Results.Ok(new
     hint = "set Otlp:Endpoint, or OTEL_EXPORTER_OTLP_ENDPOINT, to any OTLP backend: Jaeger, Tempo, Grafana, SigNoz, or a Collector",
 })).WithName("OtlpStatus");
 
-// The instruction set for models: how to mint a sandbox, what the diagram language
+// The instruction set for models: how to mint a shoebox, what the diagram language
 // means, how to fire, how to read what came back, and how fast it may be asked.
 //
 // Served by the API rather than shipped as a front-end asset, deliberately. The

@@ -1,4 +1,4 @@
-public static class SandboxExtensions
+public static class TelemetryExtensions
 {
     /// <summary>
     /// Console logging, and nothing else.
