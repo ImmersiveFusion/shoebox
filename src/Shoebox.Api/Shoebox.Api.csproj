@@ -40,4 +40,10 @@
     <Folder Include="wwwroot\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The agent instruction set, served at /llms.txt. Copied rather than embedded
+         so it can be read and corrected without a rebuild reflex. -->
+    <Content Include="llms.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

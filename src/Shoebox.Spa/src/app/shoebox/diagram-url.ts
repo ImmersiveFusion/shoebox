@@ -17,6 +17,34 @@
  */
 
 const PARAM = 'd';
+const SANDBOX_PARAM = 'sandboxId';
+
+/** The sandbox this page is running in, if the link carried one. */
+export function readSandboxFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get(SANDBOX_PARAM);
+}
+
+/**
+ * Puts the sandbox id in the address bar, so copying the URL copies the sandbox
+ * along with the diagram.
+ *
+ * Without this the id was minted per visit and never written down, so a shared
+ * link handed the next person a *different* sandbox: same diagram, same runs, and
+ * `shoebox.id` on their spans not matching yours, which is exactly the tag you
+ * would filter a shared backend by. A link is meant to be a runnable repro, and a
+ * repro whose telemetry lands somewhere you cannot see is not one.
+ *
+ * Query string rather than fragment, deliberately, and it is the one thing here
+ * that belongs there: the server needs it on every run, and unlike the diagram it
+ * is a random id that says nothing about anybody's system.
+ */
+export function writeSandboxToUrl(sandboxId: string): void {
+  if (!sandboxId) return;
+  const url = new URL(window.location.href);
+  if (url.searchParams.get(SANDBOX_PARAM) === sandboxId) return;
+  url.searchParams.set(SANDBOX_PARAM, sandboxId);
+  window.history.replaceState(null, '', url.toString());
+}
 
 function toBase64Url(bytes: Uint8Array): string {
   let binary = '';

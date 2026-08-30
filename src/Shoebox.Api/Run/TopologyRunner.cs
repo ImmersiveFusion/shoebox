@@ -50,7 +50,7 @@ public sealed class TopologyRunner
 
         if (!string.IsNullOrWhiteSpace(sandboxId))
         {
-            // sandbox.id rides Baggage onto every span, which is also a live
+            // shoebox.id rides Baggage onto every span, which is also a live
             // demonstration of baggage propagation inside a tool whose job is
             // teaching people to read telemetry.
             Baggage.SetBaggage(SandboxConstants.TagKey, sandboxId);

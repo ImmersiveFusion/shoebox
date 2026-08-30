@@ -164,6 +164,57 @@ not mean the backend accepted anything: export is best effort and a run will not
 fail because the far end refused it, so check your backend for the trace id the run
 returns.
 
+## For agents
+
+Models write Mermaid fluently and reach for me unprompted, so the instructions they
+need are served rather than assumed:
+
+**https://shoebox.deepcube.ai/llms.txt**
+
+It covers minting a sandbox, the diagram language, every arrow form, firing, reading a
+run back, the share-link format, and the pacing below.
+
+Writing it found a real hole. A model writes far more Mermaid than the parser used to
+read, and everything outside the subset became a note **while the run still returned
+200 with a trace id** — a green trace for a system nobody drew, which is worse than a
+parse failure because a parse failure is visible. A real Azure reference architecture,
+pasted unedited, came through as 6 of its 11 edges with 18 ignored lines and its
+service names carrying the `n` from a `
+` escape.
+
+Chains (`a --> b --> c`), dotted arrows (`-.->`, `-. text .->`), thick arrows (`==>`),
+inline labels (`-- text -->`) and undirected links (`---`) are all read now, and the
+same diagram comes through as 12 of 12. `subgraph`/`end`/`direction`/`style` are
+skipped in silence, because they are understood perfectly well and simply have no
+counterpart in a trace. Two judgements are reported rather than assumed: an undirected
+link is read left to right *and says so in the notes*, and an edge pointing at a
+subgraph becomes a service *and says so*. A line is all or nothing — half a parsed
+line is how a diagram silently becomes a different one.
+
+`POST /topology/parse` is free, emits nothing, and is still the thing to call before
+firing anything you did not write yourself.
+
+### Pacing
+
+One shared instance serves everybody, so runs are throttled. Enforced in the app, and
+restated in every 429 alongside a `Retry-After`:
+
+| What | Limit |
+|---|---|
+| `POST /run` per sandbox | 5 in a row, then one every 5 minutes |
+| `POST /run` per source address | twice that, across every sandbox it mints |
+| `POST /sandbox` per source address | 5, then one every 5 minutes |
+| `POST /topology/parse` per source address | 60 a minute |
+
+The burst is deliberate: replica selection is round robin on `runIndex`, so seeing what
+`broken on #3` of five does takes five runs and should not be a twenty-five minute
+errand. The per-source layer exists because a sandbox id is minted by asking for one,
+so a limit keyed on it alone is evaded by asking again.
+
+This is politeness enforcement, not abuse defence. A distributed slam is a job for the
+edge; this is what stops the ordinary way a public tool falls over, which is an agent
+in a loop.
+
 ## Running it
 
 ### Prerequisites
@@ -216,7 +267,7 @@ dotnet test tests/Shoebox.Api.UnitTests/Shoebox.Api.UnitTests.csproj    # 65 tes
 
 One shared instance serves everyone. Isolation is logical, not provisioned: each
 visitor gets a GUID `sandboxId`, it rides OpenTelemetry Baggage onto every span as
-`sandbox.id`, and per-sandbox state is held in memory and deliberately not
+`shoebox.id`, and per-sandbox state is held in memory and deliberately not
 persisted.
 
 That is a live demonstration of baggage propagation inside a tool for learning to
