@@ -16,6 +16,20 @@ namespace Shoebox.Api.Run;
 /// </summary>
 public sealed record Hop(string From, string To, bool Failed, int Ms);
 
+/// <summary>
+/// An edge that is in the diagram and was not crossed, and why.
+///
+/// Same argument as <see cref="Hop"/>, pointed the other way. A client can draw the
+/// path a request took because the server sends it; it cannot draw the difference
+/// between the diagram and the run unless the server sends that too. Left to prose
+/// in <c>notes</c>, the picture shows every arrow identically and a run that walked
+/// two thirds of the diagram looks exactly like one that walked all of it.
+///
+/// <c>From</c> and <c>To</c> are pod ids, matching <see cref="Hop"/>, so a renderer
+/// can key straight onto the nodes it already drew.
+/// </summary>
+public sealed record NotTaken(string From, string To, string Reason);
+
 public sealed record RunResult(
     int RunIndex,
     string? TraceId,
@@ -23,7 +37,8 @@ public sealed record RunResult(
     int SpanCount,
     int FailedSpanCount,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<Hop> Hops);
+    IReadOnlyList<Hop> Hops,
+    IReadOnlyList<NotTaken> NotTaken);
 
 /// <summary>
 /// Fires exactly one request through the graph and emits the spans it produces.
@@ -45,7 +60,7 @@ public sealed class TopologyRunner
         {
             return new RunResult(runIndex, null, Array.Empty<string>(), 0, 0,
                 new[] { "no entry point: every pod is called by something, so there is nowhere to start" },
-                Array.Empty<Hop>());
+                Array.Empty<Hop>(), Array.Empty<NotTaken>());
         }
 
         if (!string.IsNullOrWhiteSpace(shoeboxId))
@@ -72,6 +87,9 @@ public sealed class TopologyRunner
         var state = new RunState(runIndex);
         try
         {
+            // The entry pod is on the path before the walk starts, or a diagram
+            // that calls back to its own front door loops on the first lap.
+            state.Enter(entry.Id);
             Visit(graph, entry, parent: null, state);
         }
         finally
@@ -86,7 +104,27 @@ public sealed class TopologyRunner
             state.SpanCount,
             state.FailedSpanCount,
             Notes(graph, state),
-            state.Hops);
+            state.Hops,
+            NotTakenEdges(state));
+    }
+
+    /// <summary>
+    /// Edges the request never crossed, anywhere in the run.
+    ///
+    /// Declining an edge is per path, so the same arrow can be refused on one path
+    /// and crossed on another: <c>ui -> accounting -> topic -> accounting</c> turns
+    /// back, and <c>ui -> order -> topic -> accounting</c> does not. Only an edge
+    /// that was refused every time it came up is one the picture should show
+    /// differently — anything else would grey out an arrow the request did cross,
+    /// which is the exact class of lie <see cref="Hop"/> exists to prevent.
+    /// </summary>
+    private static IReadOnlyList<NotTaken> NotTakenEdges(RunState state)
+    {
+        var crossed = state.Hops.Select(h => $"{h.From}->{h.To}").ToHashSet(StringComparer.Ordinal);
+
+        return state.DeclinedEdges
+            .Where(e => !crossed.Contains($"{e.From}->{e.To}"))
+            .ToList();
     }
 
     /// <summary>
@@ -94,7 +132,22 @@ public sealed class TopologyRunner
     /// </summary>
     private static IReadOnlyList<string> Notes(Graph graph, RunState state)
     {
-        var notes = graph.Notes.Concat(state.Notes);
+        var notes = graph.Notes.Concat(graph.CycleNotes).Concat(state.Notes);
+
+        if (state.DeclinedEdges.Count > 0)
+        {
+            // Ids are what the structured NotTaken carries, because a renderer keys
+            // on them. A sentence read aloud to a person wants the service names.
+            var named = string.Join(", ", state.DeclinedEdges.Select(e =>
+                $"{graph.ById(e.From)?.ServiceName ?? e.From} -> {graph.ById(e.To)?.ServiceName ?? e.To}"));
+            notes = notes.Append(
+                $"The request arrived back at something it had already passed through, so it did not go round again: {named}. " +
+                "That is one request resolved against a diagram that contains a cycle, not a truncated one — " +
+                "every path was walked to its end. A service reached twice by two different callers still runs twice; " +
+                "what never happens is the same service twice on one causal path. " +
+                "If the loop is the thing you wanted to see, the two directions through a topic are usually two " +
+                "different events, and drawing them as two destinations models it without the cycle.");
+        }
 
         if (state.Phantoms.Count > 0)
         {
@@ -110,9 +163,31 @@ public sealed class TopologyRunner
     {
         // A cycle in a pasted diagram is somebody's real architecture, not a bug.
         // Bound the walk rather than refusing to run it.
-        if (depth > 32)
+        //
+        // The budget is the bound that matters and the depth limit is not. This
+        // walk enumerates paths rather than visiting each pod once, so a cycle
+        // does not lengthen the walk, it multiplies it: at branching factor two,
+        // a depth limit of 32 permits on the order of 2^32 paths. On 2026-09-03 a
+        // single request through a diagram with three cycles through one pub/sub
+        // topic emitted 23,428 spans across a 65-minute trace, and was still
+        // emitting after the client that fired it had closed. Depth 32 was never
+        // reached and never would have been.
+        if (state.Exhausted)
         {
-            state.Note("walk stopped at depth 32, the diagram contains a cycle");
+            state.NoteOnce(
+                $"Walk stopped at {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
+                "the request kept arriving back where it started and this run is a truncated " +
+                "prefix of an unbounded one rather than a picture of the system. " +
+                "Nothing below this point ran, and the hops and timings above it are still real.");
+            return;
+        }
+
+        if (depth > RunLimits.MaxDepth)
+        {
+            // NoteOnce, not Note. This fired on every branch that reached the
+            // limit, so a looping diagram did not produce "a note about a cycle",
+            // it produced thousands of identical copies of one.
+            state.NoteOnce($"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle.");
             return;
         }
 
@@ -171,6 +246,11 @@ public sealed class TopologyRunner
 
         foreach (var call in graph.From(pod.Id))
         {
+            // Checked per edge, not only on entry. A pod fanning out to six
+            // consumers would otherwise spend six times the budget past the point
+            // it ran out, once for every branch already inside the loop.
+            if (state.Exhausted) break;
+
             var target = graph.ById(call.ToId);
             if (target is null) continue;
 
@@ -206,9 +286,17 @@ public sealed class TopologyRunner
             // Handled properly in PublishAndDeliver.
             if (call.Phantom)
             {
-                state.Note($"phantom on a direct call to {target.ServiceName} is ignored: a service that is not there would refuse the connection and the trace would show the error. Put it behind a queue.");
+                state.NoteOnce($"phantom on a direct call to {target.ServiceName} is ignored: a service that is not there would refuse the connection and the trace would show the error. Put it behind a queue.");
+
+                if (!state.Enter(target.Id))
+                {
+                    state.NotReentered(pod.Id, target.Id);
+                    continue;
+                }
+
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
                 Visit(graph, target, activity, state, depth + 1);
+                state.Leave(target.Id);
                 continue;
             }
 
@@ -232,8 +320,18 @@ public sealed class TopologyRunner
             // publish.
             if (target.Kind == PodKind.Queue)
             {
+                // A destination counts as somewhere the request has been. Without
+                // this, "publish, consume, publish to the same topic again" is a
+                // loop even when no service repeats.
+                if (!state.Enter(target.Id))
+                {
+                    state.NotReentered(pod.Id, target.Id);
+                    continue;
+                }
+
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
                 PublishAndDeliver(graph, pod, target, graph.From(target.Id).ToList(), activity, state, depth, instance);
+                state.Leave(target.Id);
                 continue;
             }
 
@@ -253,8 +351,18 @@ public sealed class TopologyRunner
                 continue;
             }
 
+            // Datastores, caches and third parties fell out above and are never
+            // guarded: they are leaves, they cannot start a cycle, and one
+            // database called by three services legitimately appears three times.
+            if (!state.Enter(target.Id))
+            {
+                state.NotReentered(pod.Id, target.Id);
+                continue;
+            }
+
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             Visit(graph, target, activity, state, depth + 1);
+            state.Leave(target.Id);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
@@ -300,6 +408,8 @@ public sealed class TopologyRunner
 
         foreach (var call in consumers)
         {
+            if (state.Exhausted) break;
+
             var consumer = graph.ById(call.ToId);
             if (consumer is null) continue;
 
@@ -317,9 +427,19 @@ public sealed class TopologyRunner
                 continue;
             }
 
+            if (!state.Enter(consumer.Id))
+            {
+                // The publish still happened and still names the destination. What
+                // did not happen is this consumer running a second time on one
+                // causal path, which in a real system is a different message.
+                state.NotReentered(queue.Id, consumer.Id);
+                continue;
+            }
+
             received = true;
             state.Hop(queue.Id, consumer.Id, failed: false, ms: consumer.DefaultLatencyMs);
             Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
+            state.Leave(consumer.Id);
         }
 
         // A publish with no receive is the signature of a phantom, and it is not
@@ -573,6 +693,62 @@ public sealed class TopologyRunner
         public int FailedSpanCount { get; set; }
         private readonly List<string> _notes = new();
         public void Note(string n) => _notes.Add(n);
+
+        /// <summary>
+        /// For notes a bounded walk reaches many times over. The cycle warning is
+        /// one sentence about the diagram, not one sentence per truncated branch.
+        /// </summary>
+        public void NoteOnce(string n)
+        {
+            if (!_notes.Contains(n, StringComparer.Ordinal)) _notes.Add(n);
+        }
+
+        /// <summary>
+        /// Whether this run has spent its span budget. See <see cref="RunLimits"/>
+        /// for why the budget rather than the depth limit is the real bound.
+        /// </summary>
+        public bool Exhausted => SpanCount >= RunLimits.MaxSpans;
+
+        /// <summary>
+        /// The pods on the current root-to-leaf path. Added on the way down and
+        /// removed on the way back up, so it describes where this request has
+        /// been, not everywhere the walk has ever been.
+        ///
+        /// This is what makes a cyclic diagram finite without cutting anything
+        /// off. A trace is a tree; a topology is a graph, and a graph with a
+        /// cycle in it is an ordinary architecture rather than a mistake. Walking
+        /// each causal path without repeating a pod on it is how one turns into
+        /// the other. The pub/sub diagram that ran unbounded on 2026-09-03 comes
+        /// out as 44 spans, complete, with nothing truncated.
+        ///
+        /// Per path, emphatically not per run: a shared database called by three
+        /// services has to appear three times, and it does, because those are
+        /// three different paths.
+        /// </summary>
+        private readonly HashSet<string> _path = new(StringComparer.Ordinal);
+
+        public bool Enter(string podId) => _path.Add(podId);
+
+        public void Leave(string podId) => _path.Remove(podId);
+
+        private readonly List<NotTaken> _notTaken = new();
+        private readonly HashSet<string> _notTakenSeen = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Pod ids, not service names, so a renderer can key onto the nodes it
+        /// already drew. Deduplicated: one edge declined on forty different paths
+        /// is one fact about the diagram, not forty.
+        /// </summary>
+        public void NotReentered(string fromPodId, string toPodId)
+        {
+            if (!_notTakenSeen.Add($"{fromPodId}->{toPodId}")) return;
+
+            _notTaken.Add(new NotTaken(fromPodId, toPodId,
+                "already on this request's path — a request does not visit the same pod twice on one causal path"));
+        }
+
+        /// <summary>Every edge refused at least once, before filtering to those never crossed.</summary>
+        public IReadOnlyList<NotTaken> DeclinedEdges => _notTaken;
 
         /// <summary>
         /// These were being collected and thrown away. The cycle warning has been

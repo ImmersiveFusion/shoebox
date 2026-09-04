@@ -104,4 +104,105 @@ public sealed class Graph
     }
 
     public IEnumerable<Call> From(string podId) => Calls.Where(c => c.FromId == podId);
+
+    /// <summary>
+    /// Pods that can reach themselves, in document order.
+    ///
+    /// Drawing a pub/sub topic is the ordinary way to end up here: every service
+    /// that publishes to a topic is usually also subscribed to it, so a faithful
+    /// reading of a stock reference architecture puts two or three pods on a
+    /// cycle without anybody meaning anything unusual by it.
+    /// </summary>
+    public IReadOnlyList<string> CyclicPods => _cyclicPods ??= FindCyclicPods();
+
+    private IReadOnlyList<string>? _cyclicPods;
+
+    /// <summary>
+    /// What a cycle costs, said before the run rather than after it.
+    ///
+    /// The walk enumerates paths, not pods, so a cycle does not add a hop, it
+    /// multiplies every hop downstream of it. One request through a diagram with
+    /// a three-way cycle produced 23,428 spans and an hour-long trace on
+    /// 2026-09-03, and <c>/topology/parse</c> — the endpoint whose whole job is to
+    /// answer "is this safe to fire" — returned no notes at all. This is that
+    /// missing sentence.
+    /// </summary>
+    public IReadOnlyList<string> CycleNotes
+    {
+        get
+        {
+            if (CyclicPods.Count == 0) return Array.Empty<string>();
+
+            var named = string.Join(", ", CyclicPods.Select(id => ById(id)?.Label ?? id));
+            return new[]
+            {
+                $"A request that reaches {named} can arrive back where it started. " +
+                "A run still walks every path to its end — it just will not visit the same pod " +
+                "twice on one causal path, the way a real request does not — so what comes back " +
+                "is one honest resolution of this diagram rather than a loop or a truncation. " +
+                "If the loop itself is what you wanted to model, the two directions through a " +
+                "topic are usually two different events: draw them as two destinations and the " +
+                "cycle goes away on its own.",
+            };
+        }
+    }
+
+    private IReadOnlyList<string> FindCyclicPods()
+    {
+        var result = new List<string>();
+        foreach (var pod in Pods)
+        {
+            if (CanReachItself(pod.Id)) result.Add(pod.Id);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Plain reachability rather than Tarjan. These graphs are pasted by hand and
+    /// run to tens of pods; the clarity is worth more than the asymptotics.
+    /// </summary>
+    private bool CanReachItself(string podId)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>();
+
+        foreach (var call in From(podId)) pending.Push(call.ToId);
+
+        while (pending.Count > 0)
+        {
+            var id = pending.Pop();
+            if (string.Equals(id, podId, StringComparison.Ordinal)) return true;
+            if (!seen.Add(id)) continue;
+
+            foreach (var call in From(id)) pending.Push(call.ToId);
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// The ceiling on one run.
+///
+/// Depth alone never bounded anything. The walk expands paths, so a cycle at
+/// branching factor two under a depth limit of 32 permits on the order of 2^32
+/// of them: a limit that is arithmetically present and operationally absent. A
+/// span budget bounds what the run actually costs — the thing that gets emitted,
+/// stored, and drawn — and it holds whatever shape the diagram is.
+/// </summary>
+public static class RunLimits
+{
+    /// <summary>
+    /// Comfortably above any honest diagram. The largest acyclic topology anyone
+    /// has pasted runs to a few dozen spans, so this only ever fires on a walk
+    /// that has stopped describing the picture.
+    /// </summary>
+    public const int MaxSpans = 500;
+
+    /// <summary>
+    /// Still here, and still worth keeping: it bounds a single path through a
+    /// long chain, which the span budget does not distinguish from a wide one.
+    /// </summary>
+    public const int MaxDepth = 32;
 }
