@@ -331,14 +331,18 @@ keep me up for the next person rather than to be clever at you.
 
 | What | Limit |
 |---|---|
-| `POST /run` per shoebox | **5 in a row, then one every 5 minutes** |
+| `POST /run` per shoebox | **20 in a row, then 2 a minute** |
 | `POST /run` per source address | twice that, however many shoeboxes you mint |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` per source address | 60 a minute |
 
 The burst is there on purpose: replica selection is round robin on `runIndex`, so
-seeing what `broken on #3` of five actually does takes five runs, and that should not
-be a twenty-five minute errand. Spend the burst on a replica walk, not on a loop.
+seeing what `broken on #3` of five actually does takes five runs, and a burst of twenty
+buys two of those back to back with spare. Spend it on replica walks, not on a loop.
+
+Note the asymmetry: running got looser and minting did not. They guard different things.
+A run costs emission and is now capped at 500 spans, so it can be priced generously; a
+mint costs nothing and is limited only because it is the way around the run limit.
 
 Minting a fresh shoebox to reset the count buys you one more allowance and then stops
 working: the per-source limit is twice the per-shoebox one and counts every shoebox
@@ -350,8 +354,8 @@ Over the line, I answer **429** with a `Retry-After` header and a body that repe
 the numbers:
 
 ```
-{"error":"slow down","retryAfterSeconds":300,
- "limits":{"run":"5 in a row, then one every 5 minutes, per shoebox", …},
+{"error":"slow down","retryAfterSeconds":60,
+ "limits":{"run":"20 in a row, then 2 a minute, per shoebox", …},
  "hint":"…/llms.txt explains the pacing, and /topology/parse is free"}
 ```
 

@@ -29,13 +29,38 @@ builder.Services.AddHttpContextAccessor();
 // a well-behaved caller can pace itself instead of discovering the limit by
 // hitting it.
 //
-// One run per sender per five minutes, sustained -- but five in a row, because
-// replica selection is deterministic round robin on runIndex and the documented
-// way to see "broken on #3" of five is to fire five times. A strict one-in-five-
-// minutes would turn that lesson into a twenty-five minute errand. Change
-// RunBurst to 1 if the sustained rate should also be the instantaneous one.
-var runPeriod = TimeSpan.FromMinutes(5);
-const int RunBurst = 5;
+// Twenty in a row, then two a minute, sustained. Replica selection is
+// deterministic round robin on runIndex and the documented way to see
+// "broken on #3" of five is to fire five times, so the natural unit of work here
+// is a block of five: a burst of twenty buys two of those back to back with
+// spare, where the old five bought exactly one with none. Eighteen shipped
+// examples is also more than one sitting at the old rate.
+//
+// Priced against emission rather than against feel, and repriced once the cost
+// of a run changed. Before the cycle fix a single run was unbounded and one was
+// measured at 23,428 spans, which made this limiter the only ceiling on what the
+// shared backend received; a burst of five could put ~117,000 spans in it in
+// seconds. A run is now capped at RunLimits.MaxSpans and typically emits 20-44,
+// so a full hour at the rate below is a worst case of ~60,000 spans -- about
+// half of what one old burst could do in seconds. Loosening the rate is not a
+// loosening in real terms, it is charging the right price for what a run now
+// costs.
+//
+// Change RunBurst to 1 if the sustained rate should also be the instantaneous
+// one.
+var runPeriod = TimeSpan.FromMinutes(1);
+const int RunBurst = 20;
+
+// Minting is deliberately NOT on RunBurst, though it was.
+//
+// The two limits guard different things and only one of them is about cost. A
+// run emits; minting emits nothing, and the only reason to rate limit it is that
+// a fresh shoebox id is the way to walk around a per-shoebox run limit. So it is
+// priced against the evasion, not against the work, and it stays where it was
+// while the run rate rises. Sharing one constant meant raising the run limit
+// silently raised the evasion budget with it.
+var mintPeriod = TimeSpan.FromMinutes(5);
+const int MintBurst = 5;
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -58,9 +83,9 @@ builder.Services.AddRateLimiter(options =>
             retryAfterSeconds = (int)Math.Ceiling(wait.TotalSeconds),
             limits = new
             {
-                run = $"{RunBurst} in a row, then one every {runPeriod.TotalMinutes:0} minutes, per shoebox",
+                run = $"{RunBurst} in a row, then 2 a minute, per shoebox",
                 source = "twice that from one address, however many shoeboxes it mints",
-                shoebox = $"{RunBurst} new shoeboxes, then one every {runPeriod.TotalMinutes:0} minutes, per address",
+                shoebox = $"{MintBurst} new shoeboxes, then one every {mintPeriod.TotalMinutes:0} minutes, per address",
                 parse = "60 a minute per address, and it emits nothing",
             },
             hint = "https://shoebox.deepcube.ai/llms.txt explains the pacing, and /topology/parse is free",
@@ -87,7 +112,7 @@ builder.Services.AddRateLimiter(options =>
                     _ => new TokenBucketRateLimiterOptions
                     {
                         TokenLimit = RunBurst,
-                        TokensPerPeriod = 1,
+                        TokensPerPeriod = 2,
                         ReplenishmentPeriod = runPeriod,
                         QueueLimit = 0,
                         AutoReplenishment = true,
@@ -105,7 +130,7 @@ builder.Services.AddRateLimiter(options =>
                     _ => new TokenBucketRateLimiterOptions
                     {
                         TokenLimit = RunBurst * 2,
-                        TokensPerPeriod = 2,
+                        TokensPerPeriod = 4,
                         ReplenishmentPeriod = runPeriod,
                         QueueLimit = 0,
                         AutoReplenishment = true,
@@ -119,9 +144,9 @@ builder.Services.AddRateLimiter(options =>
                     SourceKey(http),
                     _ => new TokenBucketRateLimiterOptions
                     {
-                        TokenLimit = RunBurst,
+                        TokenLimit = MintBurst,
                         TokensPerPeriod = 1,
-                        ReplenishmentPeriod = runPeriod,
+                        ReplenishmentPeriod = mintPeriod,
                         QueueLimit = 0,
                         AutoReplenishment = true,
                     })
