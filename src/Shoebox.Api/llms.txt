@@ -99,6 +99,23 @@ three more instances of the inventory API" is `inv[Inventory API x3]` — one po
 three replicas — and not three nodes. Three nodes means something different and the
 trace will show it.
 
+**A cycle is fine, and it does not mean what you might fear.** A pub/sub topic drawn
+with arrows going both ways — `accounting --> topic` *and* `topic --> accounting` —
+means the request can arrive back where it started. That is an ordinary architecture
+and I run it. A request never visits the same pod twice on one causal path, the same
+way a real request does not, so the walk ends because it runs out of paths and not
+because it hit a ceiling. Nothing is truncated. `notes` names the edges I declined to
+take a second time, and `/topology/parse` returns `cyclicPods` naming the pods on a
+loop.
+
+Two things follow. A service reached by two *different* callers still runs twice —
+those are two paths, not a repeat, so a shared database appearing three times in one
+trace is correct and not a bug. And if the loop is the thing you actually wanted to
+model, the two directions through a topic are almost always two different events:
+`OrderPlaced` in, `AccountingCompleted` out. Draw them as two destinations and the
+cycle disappears on its own, which is both more faithful and more interesting to look
+at.
+
 **Broken and phantom are not the same thing, and the difference is the lesson.**
 `broken` leaves a span with an error on it, which is evidence. `phantom` leaves
 nothing at all: no span from that service, no span naming it, nothing downstream of
@@ -159,6 +176,11 @@ understood", that is why — flatten the chains and use `-->`.
   entry node first.
 - **`pods` count and `serviceName` values** match what you intended, since the label
   becomes the service name and gets slugified.
+- **`cyclicPods` is empty, or you meant it.** Non-empty names the pods a request can
+  return to. The run is still safe and still complete — but a cycle is very often a
+  misread picture rather than a drawn one, so check it is really there before firing.
+  A stock Azure pub/sub diagram read as bidirectional at the topic is the usual way
+  this happens: the topic fans out one way, and only the publisher publishes.
 
 And reduce before you send. I am a shoebox, not a datacentre: a 40-node reference
 architecture parses now, but the lesson is one request's journey. Take the path that
@@ -207,7 +229,8 @@ every time. A missing or non-positive `runIndex` is treated as 1.
  "spanCount":17,
  "failedSpanCount":1,
  "notes":[],
- "hops":[{"from":"gw","to":"orders","failed":true,"ms":2}, …]}
+ "hops":[{"from":"gw","to":"orders","failed":true,"ms":2}, …],
+ "notTaken":[]}
 ```
 
 - `traceId` — hand this to the human, or to whatever backend you can query. It is how
@@ -215,6 +238,11 @@ every time. A missing or non-positive `runIndex` is treated as 1.
 - `hops` — every edge the request crossed, in the order it crossed it. This is the
   authoritative path: I chose which replica served and which calls failed, so anything
   you derived from the diagram yourself could describe a run that did not happen.
+- `notTaken` — edges that are in the diagram and were crossed **nowhere** in this run,
+  with a reason, as `{from, to, reason}` on pod ids so a renderer can key onto the
+  nodes it already drew. Usually empty, including for most diagrams with a cycle in
+  them: declining is per path, so an arrow refused on one path is normally crossed on
+  another. Non-empty means part of what somebody drew genuinely did not run — say so.
 - `servedBy` — which instance served each step.
 - `notes` — things only a run can tell you, including unconsumed queues and phantoms.
   **Read these out.** They are usually the most useful sentence in the response.

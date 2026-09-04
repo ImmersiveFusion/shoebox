@@ -47,6 +47,7 @@ semantic conventions, so nothing new has to be learned.
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
 | `q -->\|phantom\| b` | b never runs, so nothing consumes what q published |
+| `a --> q` and `q --> a` | a cycle: runs, terminates, reported in `cyclicPods` |
 
 **A phantom is a dead consumer**, the same thing
 [Snowglobe](https://github.com/ImmersiveFusion/snowglobe) means by it: *services you
@@ -79,6 +80,33 @@ your diagram on screen under the same name.
 
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
+
+**A cycle is an architecture, not a mistake.** Draw a pub/sub topic with arrows
+going both ways — `accounting --> topic` and `topic --> accounting` — and a request
+can arrive back where it started. Shoebox runs it. A trace is a tree and a topology
+is a graph, and the way one becomes the other is that a request never visits the
+same pod twice on one causal path, exactly as a real request does not. The walk
+therefore ends because it runs out of paths, not because it hits a ceiling: nothing
+is capped and nothing is cut off. `notes` names the edges it declined to take a
+second time, `/topology/parse` returns `cyclicPods`, and a run returns `notTaken` —
+edges crossed nowhere at all, as `{from, to, reason}` on pod ids, so a renderer can
+show them differently. It is usually empty even for a cyclic diagram, because an
+arrow refused on one path is normally crossed on another; the Azure diagram that
+started all this leaves every one of its arrows crossed somewhere.
+
+Per *path*, not per run. A service called by two different callers still runs twice,
+because those are two paths — a shared database appearing three times in one trace is
+correct.
+
+If the loop is the thing you meant to model, the two directions through a topic are
+almost always two different events — `OrderPlaced` in, `AccountingCompleted` out.
+Drawing them as two destinations removes the cycle and is the more faithful picture
+anyway.
+
+There is a 500-span budget behind all of this, and it is a backstop rather than the
+mechanism: path enumeration is factorial in the worst case, so a pathological mesh
+can still be stopped. An honest diagram never reaches it. The Azure reference
+architecture that first exposed all of this comes out at 44 spans.
 
 **Labels become telemetry names, and are slugified on the way.** A queue label goes
 through the same slugifier as a service name, so `q[[orders.created]]` publishes to a

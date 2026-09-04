@@ -253,7 +253,13 @@ app.MapPost("/topology/parse", (DiagramRequest request) =>
             reason = c.FailureReason,
         }),
         entry = graph.Entry?.Id,
-        notes = graph.Notes,
+
+        // Cycles belong here more than anywhere else. This is the endpoint the
+        // agent contract sends people to before firing something they did not
+        // write themselves, and it was returning an empty notes array on diagrams
+        // that go on to emit tens of thousands of spans.
+        notes = graph.Notes.Concat(graph.CycleNotes),
+        cyclicPods = graph.CyclicPods,
     });
 }).WithName("ParseTopology");
 
