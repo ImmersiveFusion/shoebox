@@ -291,6 +291,19 @@ $graph-paper:
     stroke-dasharray: 5 5 !important;
     animation: shoebox-traffic 1s linear infinite;
   }
+
+  // An arrow the run crossed nowhere. Faded and still, against edges that are
+  // marching: the contrast carries the message, because the traffic animation is
+  // what says "this carried a request" and stopping it says the opposite.
+  //
+  // Deliberately not red. Red is a refused call — a thing that happened and left
+  // an error span. This did not happen at all, and collapsing the two would undo
+  // the distinction the whole tool exists to teach.
+  ::ng-deep svg .flowchart-link.shoebox-untaken {
+    animation: none !important;
+    opacity: 0.25;
+    stroke-dasharray: 2 6 !important;
+  }
 }
 
 @keyframes shoebox-traffic {

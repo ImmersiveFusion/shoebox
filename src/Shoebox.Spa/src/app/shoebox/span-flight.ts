@@ -47,6 +47,40 @@ export function flyRun(host: HTMLElement, hops: readonly Hop[]): () => void {
   }
 }
 
+/** One edge the run crossed nowhere, as the server reported it. */
+export interface UntakenEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * Marks the arrows the request never crossed, so the diagram stops claiming the
+ * run walked all of it.
+ *
+ * The server decides this, exactly as it decides the hops, and for the same
+ * reason: the browser cannot know which edges a run declined without
+ * re-implementing the walk, and a picture drawn from a guess would show a run
+ * that did not happen.
+ *
+ * Cleared and reapplied on every fire — the previous run's answer is not this
+ * one's, and firing again must not leave a stale arrow dimmed.
+ */
+export function markUntaken(host: HTMLElement, edges: readonly UntakenEdge[]): void {
+  try {
+    const svg = host.querySelector('svg');
+    if (!svg) return;
+
+    svg.querySelectorAll('.shoebox-untaken').forEach(el => el.classList.remove('shoebox-untaken'));
+
+    for (const edge of edges) {
+      const path = edgePath(svg, { from: edge.from, to: edge.to, failed: false, ms: 0 });
+      path?.classList.add('shoebox-untaken');
+    }
+  } catch {
+    // Decoration, and never allowed to take the diagram down with it.
+  }
+}
+
 function run(host: HTMLElement, hops: readonly Hop[]): () => void {
   const svg = host.querySelector('svg');
   if (!svg || hops.length === 0) return () => undefined;

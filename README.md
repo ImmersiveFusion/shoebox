@@ -89,8 +89,9 @@ same pod twice on one causal path, exactly as a real request does not. The walk
 therefore ends because it runs out of paths, not because it hits a ceiling: nothing
 is capped and nothing is cut off. `notes` names the edges it declined to take a
 second time, `/topology/parse` returns `cyclicPods`, and a run returns `notTaken` —
-edges crossed nowhere at all, as `{from, to, reason}` on pod ids, so a renderer can
-show them differently. It is usually empty even for a cyclic diagram, because an
+edges crossed nowhere at all, as `{from, to, reason}` on pod ids. The editor fades
+those arrows and stops their traffic animation, so a run that walked two thirds of a
+diagram no longer looks like one that walked all of it. It is usually empty even for a cyclic diagram, because an
 arrow refused on one path is normally crossed on another; the Azure diagram that
 started all this leaves every one of its arrows crossed somewhere.
 
