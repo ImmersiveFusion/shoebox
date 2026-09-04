@@ -161,6 +161,12 @@
       <p class="hint" *ngIf="run.failedSpanCount === 0">
         Nothing failed on this run. If the diagram breaks only one instance, keep firing.
       </p>
+      <p class="note" *ngIf="run.notTaken?.length">
+        This run crossed every arrow but these, faded on the diagram. They are only
+        reachable by passing through something the request had already been through,
+        and one request does not go round twice.
+      </p>
+      <p class="note" *ngFor="let note of run.notes">{{ note }}</p>
     </section>
 
     <section class="panel topology" *ngIf="topology() as parsed">

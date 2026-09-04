@@ -10,7 +10,7 @@ import {
   writeShoeboxToUrl,
 } from './diagram-url';
 import { decorate } from './diagram-style';
-import { flyRun } from './span-flight';
+import { flyRun, markUntaken } from './span-flight';
 
 @Component({
   selector: 'app-shoebox',
@@ -150,6 +150,11 @@ export class ShoeboxComponent implements OnInit {
       // telling different stories.
       this.stopFlight?.();
       this.stopFlight = flyRun(this.renderTarget.nativeElement, result.hops ?? []);
+
+      // And say what it did not cross. Usually nothing, so usually this only
+      // clears the previous run's marks. When it is not nothing, part of the
+      // diagram did not run and the picture has to stop implying it did.
+      markUntaken(this.renderTarget.nativeElement, result.notTaken ?? []);
     });
   }
 
