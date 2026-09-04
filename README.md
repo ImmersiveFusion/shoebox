@@ -20,8 +20,14 @@ safe to hand to a stranger and cheap to run.
 2. **Break a call.** A label on an edge is all it takes.
 3. **Fire one request.** Nothing moves until you say so. That is the point: you
    fired one request, you know its path, and you know what you broke.
-4. **Start from an example.** Seventeen prebaked scenarios, grouped.
-5. **Share the link.** The diagram travels in the URL, so a link is a runnable
+4. **Read what it says back.** The dot flies the path the request actually took,
+   arrows it never crossed fade, and the run's **notes** appear under the result:
+   a queue nothing consumed, a line that could not be read, a cycle it did not go
+   round twice. That panel is the only place the run can tell you it did not match
+   the diagram you drew -- the trace looks complete either way -- so it is worth
+   reading before believing the picture.
+5. **Start from an example.** Eighteen prebaked scenarios, grouped.
+6. **Share the link.** The diagram travels in the URL, so a link is a runnable
    repro.
 
 The diagram lives in the URL **fragment**, not the query string. That is a privacy
@@ -230,15 +236,26 @@ restated in every 429 alongside a `Retry-After`:
 
 | What | Limit |
 |---|---|
-| `POST /run` per shoebox | 5 in a row, then one every 5 minutes |
+| `POST /run` per shoebox | 20 in a row, then 2 a minute |
 | `POST /run` per source address | twice that, across every shoebox it mints |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` and `POST /share` per source address | 60 a minute |
 
 The burst is deliberate: replica selection is round robin on `runIndex`, so seeing what
-`broken on #3` of five does takes five runs and should not be a twenty-five minute
-errand. The per-source layer exists because a shoebox id is minted by asking for one,
-so a limit keyed on it alone is evaded by asking again.
+`broken on #3` of five does takes five runs, and a burst of twenty buys two of those
+back to back with spare. Eighteen shipped examples is also more than one sitting at a
+tighter rate. The per-source layer exists because a shoebox id is minted by asking for
+one, so a limit keyed on it alone is evaded by asking again -- which is why minting has
+its own, tighter budget that did not move when the run rate rose. The two guard
+different things: a run costs emission, a mint costs nothing and is only limited
+because it is the way around the run limit.
+
+These numbers are priced against emission, and were repriced once the cost of a run
+changed. A run used to be unbounded -- one was measured at 23,428 spans -- which made
+this table the only ceiling on what the shared backend received. A run is now capped,
+and typically emits twenty to forty spans, so an hour at the rate above is a worst case
+of roughly 60,000 spans: about half of what a single five-run burst could put in the
+backend in seconds under the old rules.
 
 This is politeness enforcement, not abuse defence. A distributed slam is a job for the
 edge; this is what stops the ordinary way a public tool falls over, which is an agent
