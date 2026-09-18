@@ -67,6 +67,7 @@ public sealed class PodTracerPool : IDisposable
 
         var builder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resource)
+            .SetSampler(new DeclaredFullSampler())
             .AddSource(instanceId);
 
         // Vendor neutral by construction. Endpoint and headers are the standard OTLP
