@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Shoebox.Api.Topology;
@@ -52,17 +53,17 @@ public static partial class MermaidParser
     /// shape that gives it meaning. The shape is optional because a diagram
     /// declares a node once and then refers to it by id.
     /// </summary>
-    [GeneratedRegex(@"^\s*(?<id>[A-Za-z0-9_]+)\s*(?<shape>\[\[.*?\]\]|\[\(.*?\)\]|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\])?\s*$",
+    [GeneratedRegex(@"^\s*(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)\s*(?<shape>\[\[.*?\]\]|\[\(.*?\)\]|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\])?\s*$",
         RegexOptions.Compiled)]
     private static partial Regex NodeToken();
 
     // a standalone node declaration:  worker[Worker x5]
-    [GeneratedRegex(@"^\s*(?<id>[A-Za-z0-9_]+)\s*(?<shape>\[\[.*?\]\]|\[\(.*?\)\]|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\])\s*$",
+    [GeneratedRegex(@"^\s*(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)\s*(?<shape>\[\[.*?\]\]|\[\(.*?\)\]|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\])\s*$",
         RegexOptions.Compiled)]
     private static partial Regex NodeLine();
 
     // class db broken
-    [GeneratedRegex(@"^\s*class\s+(?<ids>[A-Za-z0-9_,\s]+?)\s+broken\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"^\s*class\s+(?<ids>[A-Za-z0-9_,\s-]+?)\s+broken\s*$", RegexOptions.Compiled)]
     private static partial Regex ClassBrokenLine();
 
     // "Worker x5" -> replicas, "Worker #2" -> pinned instance
@@ -73,12 +74,106 @@ public static partial class MermaidParser
     private static partial Regex InstanceSuffix();
 
     // subgraph HUBA["Hub network"] -- the id, so an edge drawn to the group can be named
-    [GeneratedRegex(@"^\s*subgraph\s+(?<id>[A-Za-z0-9_]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*subgraph\s+(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex SubgraphLine();
 
     /// <summary>Layout directives that are understood and deliberately not modelled.</summary>
     [GeneratedRegex(@"^\s*(subgraph\b|end\s*$|direction\b|style\b|linkStyle\b|click\b)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex LayoutLine();
+
+    /// <summary>
+    /// What a model pastes, folded back to what Mermaid accepts.
+    ///
+    /// A diagram written by a model does not arrive as clean ASCII. The same
+    /// autocorrect that turns two hyphens into an em dash turns <c>a --&gt; b</c> into
+    /// <c>a —&gt; b</c>; a hyphenated id comes back en-dashed as
+    /// <c>order–service</c>; a quoted label arrives in smart quotes that
+    /// <see cref="CleanLabel"/> does not recognise and therefore cannot strip; and a
+    /// paste that went through any rich text field on the way carries non-breaking
+    /// spaces and zero-width joiners that are invisible in every editor you would
+    /// open to find out why.
+    ///
+    /// None of it errors. Every one of them lands on exactly the failure the
+    /// hyphenated id did: the line is not understood, it is dropped, the rest of the
+    /// diagram parses, and a run comes back green for a system nobody drew.
+    ///
+    /// Dashes and arrows are folded only outside a label, because inside one an em
+    /// dash is ordinary prose and rewriting it would change what the service is
+    /// called on screen. Invisibles and quotes are folded everywhere: a zero-width
+    /// space in the middle of an id breaks it just as thoroughly as one beside the
+    /// arrow, and a smart quote is never anything but a nuisance.
+    ///
+    /// An em dash is worth two hyphens and an en dash one. That asymmetry is the
+    /// whole trick: it puts <c>--&gt;</c> back together without turning
+    /// <c>order-service</c> into <c>order--service</c>, which the link reader would
+    /// then take for an undirected edge between two services that do not exist.
+    /// </summary>
+    private static string Fold(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+
+        var folded = new StringBuilder(raw.Length);
+        var depth = 0;
+        var inPipe = false;
+
+        foreach (var ch in raw)
+        {
+            switch (ch)
+            {
+                case '​' or '‌' or '‍' or '⁠' or '﻿':
+                    continue;
+
+                case ' ' or ' ' or ' ' or ' ' or '　':
+                    folded.Append(' ');
+                    continue;
+
+                case '“' or '”' or '„' or '″':
+                    folded.Append('"');
+                    continue;
+
+                case '‘' or '’' or '‚' or '′':
+                    folded.Append('\'');
+                    continue;
+            }
+
+            // Label text is whatever somebody wrote. Only the structure around it is
+            // folded, so the depth has to be tracked before anything is rewritten.
+            if (ch == '|') inPipe = !inPipe;
+            else if (ch is '[' or '(' or '{') depth++;
+            else if (ch is ']' or ')' or '}') depth = Math.Max(0, depth - 1);
+
+            if (depth > 0 || inPipe)
+            {
+                folded.Append(ch);
+                continue;
+            }
+
+            switch (ch)
+            {
+                case '—' or '―':
+                    folded.Append("--");
+                    break;
+
+                case '–' or '‒' or '‑' or '−':
+                    folded.Append('-');
+                    break;
+
+                case '→' or '⟶' or '➔' or '➙' or '➜':
+                    folded.Append("-->");
+                    break;
+
+                case '⇒' or '⟹':
+                    folded.Append("==>");
+                    break;
+
+                default:
+                    folded.Append(ch);
+                    break;
+            }
+        }
+
+        return folded.ToString();
+    }
 
     public static Graph Parse(string diagram)
     {
@@ -91,7 +186,7 @@ public static partial class MermaidParser
 
         foreach (var raw in (diagram ?? string.Empty).Split('\n'))
         {
-            var line = raw.TrimEnd('\r').Trim();
+            var line = Fold(raw.TrimEnd('\r')).Trim();
             if (line.Length == 0 || line.StartsWith("%%", StringComparison.Ordinal)) continue;
             if (line.StartsWith("flowchart", StringComparison.OrdinalIgnoreCase)
                 || line.StartsWith("graph", StringComparison.OrdinalIgnoreCase)

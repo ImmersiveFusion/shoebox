@@ -306,5 +306,66 @@ flowchart LR
             graph.Calls.Should().BeEmpty();
             graph.Notes.Should().ContainSingle().Which.Should().Contain("not understood");
         }
+
+        /// <remarks>
+        /// The diagram a model actually writes. Ids used to be [A-Za-z0-9_]+, so every
+        /// line carrying a hyphenated id was dropped as "not understood" while the rest
+        /// parsed normally -- the partial read this parser exists to prevent. A 15-service
+        /// paste came back as the 3 services whose lines happened to be hyphen-free, with
+        /// no error, and the caller rewrote and retried against a rate limit.
+        ///
+        /// The SPA has always accepted them: diagram-style.ts matches ids as
+        /// [A-Za-z][\w-]*. Only the runner disagreed.
+        /// </remarks>
+        [Test]
+        public void Hyphenated_Ids_Are_Read_Not_Dropped()
+        {
+            var graph = MermaidParser.Parse(@"
+flowchart LR
+  user[User] --> envoy[Envoy]
+  envoy --> virtual-customer[Virtual Customer]
+  virtual-customer --> order-service[Order Service]
+  order-service --> db-primary[(Postgres)]");
+
+            graph.Notes.Should().NotContain(n => n.Contains("not understood"));
+            graph.Pods.Select(p => p.Id).Should()
+                .Equal("user", "envoy", "virtual-customer", "order-service", "db-primary");
+            graph.ById("db-primary")!.Kind.Should().Be(PodKind.Datastore);
+        }
+
+        [Test]
+        public void A_Hyphenated_Id_Survives_Every_Arrow_Form()
+        {
+            // The undirected case is the one worth pinning: a-b---c-d has to split as
+            // two ids and one link, not four dashes read as an id.
+            var graph = MermaidParser.Parse(@"
+flowchart LR
+  order-service -. manages .-> db-primary[(Store)]
+  order-service -- publishes --> job-queue[[Queue]]
+  gw-1 ==> order-service
+  cache-a---cache-b");
+
+            graph.Notes.Should().NotContain(n => n.Contains("not understood"));
+            graph.Calls.Select(c => $"{c.FromId}->{c.ToId}").Should().Contain(new[]
+            {
+                "order-service->db-primary",
+                "order-service->job-queue",
+                "gw-1->order-service",
+                "cache-a->cache-b",
+            });
+        }
+
+        [Test]
+        public void A_Hyphenated_Id_Can_Be_Marked_Broken()
+        {
+            var graph = MermaidParser.Parse(@"
+flowchart LR
+  api[API] --> order-service[Order Service]
+  class order-service broken");
+
+            graph.Notes.Should().NotContain(n => n.Contains("not understood"));
+            graph.Calls.Should().ContainSingle()
+                .Which.Broken.Should().BeTrue("a downed pod fails every call into it");
+        }
     }
 }
