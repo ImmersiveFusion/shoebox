@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Shoebox.Api.Emit;
 using Shoebox.Api.Topology;
 using OpenTelemetry;
@@ -58,9 +58,11 @@ public sealed class TopologyRunner
         var entry = graph.Entry;
         if (entry is null)
         {
+            // Nothing ran, so nothing was crossed: the difference between the diagram and the run
+            // is the whole diagram. Returning an empty NotTaken here said the opposite.
             return new RunResult(runIndex, null, Array.Empty<string>(), 0, 0,
                 new[] { "no entry point: every pod is called by something, so there is nowhere to start" },
-                Array.Empty<Hop>(), Array.Empty<NotTaken>());
+                Array.Empty<Hop>(), Unreached(graph.Calls));
         }
 
         if (!string.IsNullOrWhiteSpace(shoeboxId))
@@ -105,7 +107,7 @@ public sealed class TopologyRunner
             state.FailedSpanCount,
             Notes(graph, state),
             state.Hops,
-            NotTakenEdges(state));
+            NotTakenEdges(graph, state));
     }
 
     /// <summary>
@@ -118,14 +120,45 @@ public sealed class TopologyRunner
     /// differently — anything else would grey out an arrow the request did cross,
     /// which is the exact class of lie <see cref="Hop"/> exists to prevent.
     /// </summary>
-    private static IReadOnlyList<NotTaken> NotTakenEdges(RunState state)
+    private static IReadOnlyList<NotTaken> NotTakenEdges(Graph graph, RunState state)
     {
         var crossed = state.Hops.Select(h => $"{h.From}->{h.To}").ToHashSet(StringComparer.Ordinal);
 
-        return state.DeclinedEdges
+        var declined = state.DeclinedEdges
             .Where(e => !crossed.Contains($"{e.From}->{e.To}"))
             .ToList();
+
+        // Declining is something the walk DID, so DeclinedEdges only ever holds edges the walk
+        // reached and refused. An edge leaving a pod no path arrives at is never offered, never
+        // refused, and so was never in this list at all -- the largest difference between a
+        // diagram and its run was the one difference this could not report.
+        //
+        // Measured 2026-09-23 against a 15-pod diagram whose pub/sub topic had no publisher: 20
+        // edges drawn, 12 crossed, 1 reported here, and 7 accounted for nowhere. A renderer greying
+        // out what this returns drew those 7 exactly like the edges the request crossed, which is
+        // the class of lie Hop and NotTaken both exist to prevent.
+        var accounted = new HashSet<string>(crossed, StringComparer.Ordinal);
+        foreach (var edge in declined) accounted.Add($"{edge.From}->{edge.To}");
+
+        return declined
+            .Concat(Unreached(graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}"))))
+            .ToList();
     }
+
+    /// <summary>
+    /// Edges no request could arrive at, reported against the pod that never got called.
+    /// </summary>
+    /// <remarks>
+    /// The reason names the source pod rather than the edge, because that is the thing to fix: one
+    /// missing arrow into a topic strands the topic and everything only it calls, and the user is
+    /// looking at a picture where all of it is drawn.
+    /// </remarks>
+    private static List<NotTaken> Unreached(IEnumerable<Call> calls) =>
+        calls
+            .Select(c => new NotTaken(c.FromId, c.ToId,
+                $"never reached: no path from the entry point arrives at {c.FromId}, so this edge " +
+                "was never offered"))
+            .ToList();
 
     /// <summary>
     /// The diagram's own notes, plus the one thing only a run can tell you.
