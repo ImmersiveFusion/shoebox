@@ -308,6 +308,52 @@ flowchart LR
         }
 
         /// <remarks>
+        /// A note that only names the bad line leaves a model to guess, and it guesses by
+        /// rewriting the whole diagram and retrying. The shapes a model reaches for are round
+        /// (label) for a database and rhombus {label} for a gateway, so the note names what to
+        /// use instead and names those two as unread.
+        /// </remarks>
+        [TestCase("  api --> db(Postgres)", TestName = "Round node")]
+        [TestCase("  gw{Gateway} --> api", TestName = "Rhombus node")]
+        [TestCase("  db(Postgres)", TestName = "Round node on its own line")]
+        public void A_Rejected_Shape_Says_Which_Shapes_Are_Read(string line)
+        {
+            var graph = MermaidParser.Parse("flowchart LR\n" + line);
+
+            var note = graph.Notes.Should().ContainSingle().Which;
+            note.Should().Contain("not understood").And.Contain(line.Trim(), "the note still names the line");
+            note.Should().Contain("[(label)]").And.Contain("{{label}}").And.Contain("Round (label) and rhombus {label}");
+        }
+
+        [Test]
+        public void A_Multi_Target_Edge_Says_One_Target_Per_Arrow()
+        {
+            var graph = MermaidParser.Parse("flowchart LR\n  a --> b & c");
+
+            graph.Notes.Should().ContainSingle().Which.Should().Contain("one target")
+                .And.NotContain("[(label)]", "a shape hint would send the rewrite the wrong way");
+        }
+
+        [Test]
+        public void A_Trailing_Semicolon_Says_To_Remove_It()
+        {
+            var graph = MermaidParser.Parse("flowchart LR\n  a --> b;");
+
+            graph.Notes.Should().ContainSingle().Which.Should().Contain("trailing semicolon");
+        }
+
+        [Test]
+        public void An_Ampersand_Inside_A_Label_Is_A_Name_Not_A_Second_Target()
+        {
+            // R&D is somebody's service. The line fails on its round shape, and the note
+            // has to say that rather than blame the ampersand.
+            var graph = MermaidParser.Parse("flowchart LR\n  a[R&D] --> b(round)");
+
+            graph.Notes.Should().ContainSingle().Which.Should().Contain("[(label)]")
+                .And.NotContain("one target");
+        }
+
+        /// <remarks>
         /// The diagram a model actually writes. Ids used to be [A-Za-z0-9_]+, so every
         /// line carrying a hyphenated id was dropped as "not understood" while the rest
         /// parsed normally -- the partial read this parser exists to prevent. A 15-service

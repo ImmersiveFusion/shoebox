@@ -81,6 +81,40 @@ public static partial class MermaidParser
     [GeneratedRegex(@"^\s*(subgraph\b|end\s*$|direction\b|style\b|linkStyle\b|click\b)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex LayoutLine();
 
+    /// <summary>Label text in any bracket or edge pipe, removed before looking for structural characters.</summary>
+    [GeneratedRegex(@"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|\|[^|]*\|", RegexOptions.Compiled)]
+    private static partial Regex LabelText();
+
+    private const string ShapeRemedy =
+        "Write each node as a bare id, or an id followed by [label], [[label]], [(label)], ((label)) or {{label}}. " +
+        "Round (label) and rhombus {label} nodes are not read.";
+
+    /// <summary>
+    /// The note for a line that could not be read, with what to write instead.
+    ///
+    /// A note that only names the bad line leaves whoever wrote it to guess, and a model
+    /// that guesses rewrites at random. That was the fuel for the MakeShoebox retry loop
+    /// (IF Bug 3357, SP-118): three passes on a full-resolution screenshot, each drawing
+    /// databases as (round) and gateways as {rhombus} a little differently. Naming the
+    /// remedy fixes it for every client and every model at once.
+    ///
+    /// The remedy follows the cause. A shape hint on a multi-target edge would send the
+    /// rewrite the wrong way, so the structural causes are recognised first, looking only
+    /// outside labels: an ampersand inside <c>db[R&amp;D]</c> is somebody's service name.
+    /// </summary>
+    private static string NotUnderstood(string line)
+    {
+        var structure = LabelText().Replace(line, string.Empty);
+
+        var remedy = structure.Contains('&')
+            ? "Give each arrow one target: write a --> b and a --> c on separate lines."
+            : structure.TrimEnd().EndsWith(';')
+                ? "Remove the trailing semicolon."
+                : ShapeRemedy;
+
+        return $"line not understood, ignored: {line}. {remedy}";
+    }
+
     /// <summary>
     /// What a model pastes, folded back to what Mermaid accepts.
     ///
@@ -225,7 +259,7 @@ public static partial class MermaidParser
             }
 
             // Unknown but harmless. Recorded so the UI can say so, never thrown.
-            notes.Add($"line not understood, ignored: {line}");
+            notes.Add(NotUnderstood(line));
         }
 
         if (groups.Count > 0)
@@ -294,7 +328,7 @@ public static partial class MermaidParser
             var token = NodeToken().Match(line[position..link.Index]);
             if (!token.Success)
             {
-                notes.Add($"line not understood, ignored: {line}");
+                notes.Add(NotUnderstood(line));
                 return true;
             }
 
@@ -305,7 +339,7 @@ public static partial class MermaidParser
         var last = NodeToken().Match(line[position..]);
         if (!last.Success)
         {
-            notes.Add($"line not understood, ignored: {line}");
+            notes.Add(NotUnderstood(line));
             return true;
         }
 
