@@ -1,6 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { signal } from '@angular/core';
-import { Observable, Subscription } from 'rxjs';
+import { Observable, Subscription, timeout } from 'rxjs';
 
 const MINUTE = 60_000;
 
@@ -12,6 +12,8 @@ export const EXTEND_MS = 15 * MINUTE;
 export const MIN_INTERVAL_S = 5;
 export const MAX_INTERVAL_S = 60;
 export const DEFAULT_INTERVAL_S = 5;
+/** A run that has not answered by now is given up on, so it cannot stall firing. */
+export const RUN_TIMEOUT_MS = 30_000;
 
 /**
  * Fires the ordinary run call every N seconds until a chosen time, in the
@@ -81,13 +83,16 @@ export class TimedFiring {
       return;
     }
 
-    if (this.lastFiredAt && now - this.lastFiredAt < this.intervalS() * 1000) return;
+    // Half a second of slack, because the clock ticks once a second and a real
+    // timer drifts: without it a tick landing at 4.99 s waits for the next one
+    // and every 5 s becomes 6. Still never faster than the interval allows.
+    if (this.lastFiredAt && now - this.lastFiredAt < this.intervalS() * 1000 - 500) return;
     this.lastFiredAt = now;
 
     // Skipped, not queued. A slow run must not turn into a pile of runs.
     if (this.inFlight) return;
 
-    const sub = this.fireOnce().subscribe({
+    const sub = this.fireOnce().pipe(timeout(RUN_TIMEOUT_MS)).subscribe({
       next: () => {
         this.runs.update(n => n + 1);
         this.problem.set(null);
@@ -107,6 +112,9 @@ function describe(error: unknown): string {
   if (error instanceof HttpErrorResponse && error.status === 429) {
     const wait = error.headers?.get('Retry-After');
     return `Rate limited (429)${wait ? `, the server asks for ${wait} s` : ''}. Still firing, next try at the next tick.`;
+  }
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return `The last run did not answer within ${RUN_TIMEOUT_MS / 1000} s. Still firing.`;
   }
   if (error instanceof HttpErrorResponse) {
     return `The last run failed (${error.status || 'no response'}). Still firing.`;

@@ -164,6 +164,8 @@ export class ShoeboxComponent implements OnInit, OnDestroy {
 
   /** Nothing moves until the user says so. This is the core mechanic. */
   fire(): void {
+    // The timer is already firing; a hand-fired run on top would only double up.
+    if (this.timed.running()) return;
     this.runOnce().subscribe();
   }
 

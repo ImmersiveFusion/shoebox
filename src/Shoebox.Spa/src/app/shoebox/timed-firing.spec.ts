@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { Observable, Subject, of, throwError } from 'rxjs';
 import { ShoeboxComponent } from './shoebox.component';
 import { RunResult, ShoeboxService } from './shoebox.service';
-import { MAX_DURATION_MS, TimedFiring } from './timed-firing';
+import { MAX_DURATION_MS, RUN_TIMEOUT_MS, TimedFiring } from './timed-firing';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -52,6 +52,39 @@ describe('TimedFiring', () => {
 
     timed.start(5 * MINUTE, 600);
     expect(timed.intervalS()).toBe(60);
+  });
+
+  it('fires 12 times in a minute at 5 s, even when the clock jitters', () => {
+    const runner = fakeRunner();
+    const timed = new TimedFiring(runner.fire);
+
+    timed.start(5 * MINUTE, 5);
+    // Real ticks wobble: here odd seconds land 1 ms early and even ones 1 ms late,
+    // so a run fired on a late tick sees the next due tick arrive at 4.998 s.
+    const clock = Date.now;
+    const t0 = clock();
+    const jitter = vi.spyOn(Date, 'now').mockImplementation(() => {
+      const t = clock();
+      return t + (Math.round((t - t0) / SECOND) % 2 === 0 ? 1 : -1);
+    });
+    vi.advanceTimersByTime(59 * SECOND);
+    jitter.mockRestore();
+
+    // 0, 5, 10 ... 55 s: twelve in the minute, not the ten a 6 s pace gives.
+    expect(runner.calls()).toBe(12);
+  });
+
+  it('gives up on a run that never answers, says so, and keeps firing', () => {
+    const runner = fakeRunner('manual');
+    const timed = new TimedFiring(runner.fire);
+
+    timed.start(5 * MINUTE, 5);
+    vi.advanceTimersByTime(RUN_TIMEOUT_MS);
+    expect(timed.problem()).toContain('did not answer');
+    expect(timed.running()).toBe(true);
+
+    vi.advanceTimersByTime(5 * SECOND);
+    expect(runner.calls()).toBe(2);
   });
 
   it('enforces the two hour ceiling however long was asked for', () => {

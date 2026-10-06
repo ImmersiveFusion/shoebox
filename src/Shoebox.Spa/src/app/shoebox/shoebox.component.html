@@ -46,7 +46,7 @@
                  exactly where somebody wants to fire one. -->
             <button type="button" class="transport play in-head"
                     *ngIf="expanded() === 'editor'"
-                    (click)="fire()"
+                    (click)="fire()" [disabled]="timed.running()"
                     title="Fire one request" aria-label="Fire one request">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -102,7 +102,7 @@
                  exactly where somebody wants to fire one. -->
             <button type="button" class="transport play in-head"
                     *ngIf="expanded() === 'viewer'"
-                    (click)="fire()"
+                    (click)="fire()" [disabled]="timed.running()"
                     title="Fire one request" aria-label="Fire one request">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -122,7 +122,7 @@
     </div>
 
     <section class="panel controls">
-      <button type="button" class="transport play" (click)="fire()"
+      <button type="button" class="transport play" (click)="fire()" [disabled]="timed.running()"
               title="Fire one request" aria-label="Fire one request">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
       </button>

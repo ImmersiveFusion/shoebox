@@ -554,6 +554,9 @@ footer {
   a { color: var(--teal); }
 }
 
+// Off while timed firing is on, since the timer is already pressing it.
+button.transport.play:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
 // Timed firing. Small on purpose: it is the play button on a timer, not a mode.
 .timed {
   .timedrow {
