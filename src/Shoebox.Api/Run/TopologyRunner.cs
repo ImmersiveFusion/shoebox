@@ -290,7 +290,12 @@ public sealed class TopologyRunner
             if (call.FailsFor(instance))
             {
                 state.Hop(pod.Id, target.Id, failed: true, ms: FailureMs);
-                EmitFailedCall(pod, target, call, activity, state, instance);
+                var why = EmitFailedCall(pod, target, call, activity, state, instance);
+
+                // The caller did not get its answer, so its own span failed too.
+                // Left green, the error sat on one leaf and every service above it
+                // reported success, which is not what an unhandled exception does.
+                activity?.SetStatus(ActivityStatusCode.Error, why);
                 continue;
             }
 
@@ -576,7 +581,7 @@ public sealed class TopologyRunner
     {
         var source = _pool.For(from.ServiceName, instance);
         using var activity = source.StartActivity(
-            SpanName(to),
+            to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, null).SpanName : SpanName(to),
             ActivityKind.Client,
             parent?.Context ?? default,
             startTime: state.Clock);
@@ -587,7 +592,7 @@ public sealed class TopologyRunner
         activity.SetEndTime(state.Clock.UtcDateTime);
         state.SpanCount++;
         activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client, from)) activity.SetTag(k, v);
     }
 
     /// <summary>
@@ -597,26 +602,47 @@ public sealed class TopologyRunner
     /// </summary>
     private const int FailureMs = 2;
 
-    private void EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
+    /// <returns>The status description, so the caller can fail with the same words.</returns>
+    private string EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
     {
+        var reason = call.FailureReason ?? "call failed";
+
+        // A database answers a bad query with an error of its own, and that error is
+        // the only thing in the trace that names the cause. Without it the span said
+        // "wrong column" and nothing about which query or which column.
+        var db = to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, reason) : null;
+        var error = db?.Error;
+
         var source = _pool.For(from.ServiceName, instance);
         using var activity = source.StartActivity(
-            $"{from.ServiceName} -> {to.ServiceName}",
+            db?.SpanName ?? $"{from.ServiceName} -> {to.ServiceName}",
             ActivityKind.Client,
             parent?.Context ?? default);
 
-        if (activity is null) return;
+        var description = error?.Message ?? reason;
+        if (activity is null) return description;
 
         state.Clock = state.Clock.AddMilliseconds(FailureMs);
         activity.SetEndTime(state.Clock.UtcDateTime);
 
         state.SpanCount++;
         state.FailedSpanCount++;
-        var reason = call.FailureReason ?? "call failed";
-        activity.SetStatus(ActivityStatusCode.Error, reason);
-        activity.SetTag("error.type", reason);
+        activity.SetStatus(ActivityStatusCode.Error, description);
+        activity.SetTag("error.type", error is null ? reason : error.Code ?? error.Type);
         activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client, from, reason)) activity.SetTag(k, v);
+
+        if (error is not null)
+        {
+            activity.AddEvent(new ActivityEvent("exception", state.Clock, new ActivityTagsCollection
+            {
+                ["exception.type"] = error.Type,
+                ["exception.message"] = error.Message,
+                ["exception.stacktrace"] = error.StackTrace,
+            }));
+        }
+
+        return description;
     }
 
     /// <summary>
@@ -637,7 +663,7 @@ public sealed class TopologyRunner
 
     private static string SpanName(Pod pod) => pod.Kind switch
     {
-        PodKind.Datastore => $"SELECT {pod.ServiceName}",
+        PodKind.Datastore => DatabaseCall.Describe(pod, null, null).SpanName,
         PodKind.Cache => $"GET {pod.ServiceName}",
         PodKind.Queue => $"{pod.ServiceName} publish",
         PodKind.External => $"POST {pod.ServiceName}",
@@ -648,15 +674,17 @@ public sealed class TopologyRunner
     /// The shape somebody already drew decides the attributes. Nobody has to learn
     /// a convention to get semantically correct telemetry out.
     /// </summary>
-    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(Pod pod, ActivityKind kind)
+    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(
+        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null)
     {
         yield return new("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
 
         switch (pod.Kind)
         {
             case PodKind.Datastore:
-                yield return new("db.system.name", "postgresql");
-                yield return new("db.query.text", $"SELECT * FROM {pod.ServiceName}");
+                // The statement that ran, not a placeholder: what a reader uses to
+                // find the query in the code is the query.
+                foreach (var tag in DatabaseCall.Describe(pod, caller, failure).Tags()) yield return tag;
                 break;
             case PodKind.Cache:
                 yield return new("db.system.name", "redis");
