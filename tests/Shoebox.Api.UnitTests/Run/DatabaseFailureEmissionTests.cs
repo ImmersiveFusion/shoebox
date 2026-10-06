@@ -137,6 +137,59 @@ flowchart LR
         }
 
         [Test]
+        public void The_Error_Climbs_The_Synchronous_Chain_To_The_Entry_Point()
+        {
+            var spans = Capture(@"
+flowchart LR
+  gw[Gateway] --> api[Orders API]
+  api -->|broken: wrong column| db[(SQL Server)]
+  gw --> stock[Stock API]
+  stock --> sdb[(Stock SQL Server)]");
+
+            const string why = "Invalid column name 'Discount'.";
+            foreach (var name in new[] { "gateway", "orders-api" })
+            {
+                foreach (var span in spans.Where(s => s.Source.Name.Contains(name)))
+                {
+                    span.Status.Should().Be(ActivityStatusCode.Error, $"{span.DisplayName} is above the failure");
+                    span.StatusDescription.Should().Be(why);
+                }
+            }
+
+            spans.Should().Contain(s => s.Source.Name.Contains("gateway") && s.Kind == ActivityKind.Server);
+            spans.Where(s => s.Source.Name.Contains("stock-api")).Should().HaveCount(2)
+                .And.OnlyContain(s => s.Status == ActivityStatusCode.Unset, "the sibling branch did nothing wrong");
+        }
+
+        [Test]
+        public void The_Error_Stops_At_An_Async_Hop()
+        {
+            // The publish succeeded when the broker took the message. A consumer
+            // failing later is the consumer's error, not the producer's.
+            var spans = Capture(@"
+flowchart LR
+  gw[Gateway] --> q[[jobs]]
+  q --> worker[Worker]
+  worker -->|broken: wrong column| db[(SQL Server)]");
+
+            spans.Single(s => s.Kind == ActivityKind.Consumer).Status.Should().Be(ActivityStatusCode.Error);
+            spans.Single(s => s.Kind == ActivityKind.Producer).Status.Should().Be(ActivityStatusCode.Unset);
+            spans.Single(s => s.Kind == ActivityKind.Server).Status.Should().Be(ActivityStatusCode.Unset);
+        }
+
+        [TestCase("db[(SQL Server)]", "sql-server", 1433)]
+        [TestCase("db[(Orders Postgres)]", "orders-postgres", 5432)]
+        public void The_Db_Span_Names_Its_Server(string node, string host, int port)
+        {
+            var db = DbSpan(Capture($@"
+flowchart LR
+  api[Orders API] --> {node}"));
+
+            db.GetTagItem("server.address").Should().Be(host);
+            db.GetTagItem("server.port").Should().Be(port);
+        }
+
+        [Test]
         public void A_Healthy_Call_To_The_Same_Database_Stays_Ok()
         {
             // Two services, one database, one broken edge. The failure is that

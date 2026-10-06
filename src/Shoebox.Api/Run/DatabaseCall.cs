@@ -32,6 +32,11 @@ internal sealed partial record DatabaseCall(
         yield return new("db.collection.name", Collection);
         yield return new("db.operation.name", "SELECT");
         yield return new("db.query.text", QueryText);
+
+        // The node label is the host, as a service name in a cluster would be, on the
+        // engine's default port. Deterministic, so a shared link names the same server.
+        yield return new("server.address", Namespace);
+        yield return new("server.port", System == SqlServer ? 1433 : 5432);
         if (Error?.Code is { } code) yield return new("db.response.status_code", code);
     }
 

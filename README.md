@@ -69,8 +69,12 @@ The `SELECT dbo.Orders` client span is `ERROR` with `db.system.name`
 `SELECT Id, Status, Total, Discount FROM dbo.Orders WHERE Id = @Id`,
 `db.response.status_code` `207`, and an `exception` event carrying a
 `Microsoft.Data.SqlClient.SqlException` with the message
-`Invalid column name 'Discount'.` and a stack trace. The Orders API span above it
-fails with the same message. Leave out the quoted name and the column is
+`Invalid column name 'Discount'.` and a stack trace, plus `server.address`
+`sql-server` and `server.port` `1433` (5432 for PostgreSQL). Every synchronous span
+above it, up to the entry point, fails with the same message; the error stops at a
+queue, because a publish succeeded once the broker took the message. A run's
+`failedSpanCount` counts failed edges, not red spans, so this one reports 1 while
+two spans are red. Leave out the quoted name and the column is
 `Discount`. `wrong table`, `syntax error` and `division by zero` get their own
 error numbers and statements, a label that does not say SQL Server gets the
 PostgreSQL equivalents (`42703: column "discount" does not exist`), and any other

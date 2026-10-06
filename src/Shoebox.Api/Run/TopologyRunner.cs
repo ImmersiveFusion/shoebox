@@ -30,6 +30,11 @@ public sealed record Hop(string From, string To, bool Failed, int Ms);
 /// </summary>
 public sealed record NotTaken(string From, string To, string Reason);
 
+/// <param name="FailedSpanCount">
+/// Failed edges: one per broken call the run crossed, not one per red span. A broken
+/// call also turns every synchronous caller above it red, so a trace usually shows
+/// more ERROR spans than this. It counts causes, which is what a person fixes.
+/// </param>
 public sealed record RunResult(
     int RunIndex,
     string? TraceId,
@@ -192,7 +197,11 @@ public sealed class TopologyRunner
         return notes.ToList();
     }
 
-    private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
+    /// <returns>
+    /// The status description when this pod's span ended in error, so a synchronous
+    /// caller can fail with it too. Null when it did not.
+    /// </returns>
+    private string? Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
     {
         // A cycle in a pasted diagram is somebody's real architecture, not a bug.
         // Bound the walk rather than refusing to run it.
@@ -212,7 +221,7 @@ public sealed class TopologyRunner
                 "the request kept arriving back where it started and this run is a truncated " +
                 "prefix of an unbounded one rather than a picture of the system. " +
                 "Nothing below this point ran, and the hops and timings above it are still real.");
-            return;
+            return null;
         }
 
         if (depth > RunLimits.MaxDepth)
@@ -221,7 +230,7 @@ public sealed class TopologyRunner
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
             state.NoteOnce($"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle.");
-            return;
+            return null;
         }
 
         var instance = SelectInstance(pod, state.RunIndex);
@@ -277,6 +286,22 @@ public sealed class TopologyRunner
             }
         }
 
+        // An error in anything this pod called synchronously is this pod's error too:
+        // the caller did not get its answer. Left green, the error sat on one leaf and
+        // every service above it reported success, which is not what an unhandled
+        // exception does. Each synchronous caller fails the same way on its own return,
+        // so the error climbs the chain to the entry point.
+        //
+        // It stops at an async hop. A publish succeeds when the broker takes the
+        // message, so a consumer failing later is not the producer's error, and
+        // PublishAndDeliver discards what the consumer's Visit returns on purpose.
+        string? failure = null;
+        void Fail(string why)
+        {
+            failure ??= why;
+            activity?.SetStatus(ActivityStatusCode.Error, failure);
+        }
+
         foreach (var call in graph.From(pod.Id))
         {
             // Checked per edge, not only on entry. A pod fanning out to six
@@ -290,12 +315,7 @@ public sealed class TopologyRunner
             if (call.FailsFor(instance))
             {
                 state.Hop(pod.Id, target.Id, failed: true, ms: FailureMs);
-                var why = EmitFailedCall(pod, target, call, activity, state, instance);
-
-                // The caller did not get its answer, so its own span failed too.
-                // Left green, the error sat on one leaf and every service above it
-                // reported success, which is not what an unhandled exception does.
-                activity?.SetStatus(ActivityStatusCode.Error, why);
+                Fail(EmitFailedCall(pod, target, call, activity, state, instance));
                 continue;
             }
 
@@ -333,7 +353,7 @@ public sealed class TopologyRunner
                 }
 
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                Visit(graph, target, activity, state, depth + 1);
+                if (Visit(graph, target, activity, state, depth + 1) is { } phantomWhy) Fail(phantomWhy);
                 state.Leave(target.Id);
                 continue;
             }
@@ -399,11 +419,12 @@ public sealed class TopologyRunner
             }
 
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-            Visit(graph, target, activity, state, depth + 1);
+            if (Visit(graph, target, activity, state, depth + 1) is { } why) Fail(why);
             state.Leave(target.Id);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
+        return failure;
     }
 
     /// <summary>
@@ -476,7 +497,8 @@ public sealed class TopologyRunner
 
             received = true;
             state.Hop(queue.Id, consumer.Id, failed: false, ms: consumer.DefaultLatencyMs);
-            Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
+            // Discarded on purpose: an async hop is where error propagation stops. See Visit.
+            _ = Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
             state.Leave(consumer.Id);
         }
 
@@ -751,6 +773,7 @@ public sealed class TopologyRunner
         public string? RootTraceId { get; set; }
         public List<string> ServedBy { get; } = new();
         public int SpanCount { get; set; }
+        /// <summary>Failed edges, not red spans. See <see cref="RunResult"/>.</summary>
         public int FailedSpanCount { get; set; }
         private readonly List<string> _notes = new();
         public void Note(string n) => _notes.Add(n);
