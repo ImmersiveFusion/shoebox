@@ -148,6 +148,35 @@
          title="How to run Shoebox locally, or deploy your own">Run your own</a>
     </section>
 
+    <!-- Timed firing. Off unless started, always with an end, and while it runs it
+         says so, how many runs it has fired, when it stops, and how to stop it. -->
+    <section class="panel timer" [class.is-firing]="firing()" aria-live="polite">
+      <ng-container *ngIf="firing() as status; else timerOff">
+        <span class="firing-dot" aria-hidden="true"></span>
+        <span class="firing-text">{{ describeFiring(status) }}</span>
+        <span class="firing-skipped" *ngIf="status.skipped > 0"
+              title="A tick that finds the previous run still going is skipped, not queued">
+          {{ status.skipped }} skipped
+        </span>
+        <span class="firing-error" *ngIf="status.lastError">last run failed: {{ status.lastError }}</span>
+        <button type="button" class="timer-extend" (click)="extendFiring()"
+                title="Add 15 minutes, up to two hours left in total">+15 min</button>
+        <button type="button" class="timer-stop" (click)="stopFiring()">Stop</button>
+      </ng-container>
+      <ng-template #timerOff>
+        <label class="inline" for="timer-duration">Fire on a timer for</label>
+        <select id="timer-duration" [(ngModel)]="durationSeconds">
+          <option *ngFor="let choice of durations" [ngValue]="choice.seconds">{{ choice.label }}</option>
+        </select>
+        <label class="inline" for="timer-interval">one run every</label>
+        <input id="timer-interval" type="number" [min]="minInterval" [max]="maxInterval" step="1"
+               [(ngModel)]="intervalSeconds">
+        <span class="unit">s</span>
+        <button type="button" class="timer-start" (click)="startFiring()" [disabled]="!shoeboxId">Start</button>
+      </ng-template>
+      <p class="firing-note" *ngIf="firingNote() as note">{{ note }}</p>
+    </section>
+
     <section class="panel result" *ngIf="result() as run">
       <h2>Run {{ run.runIndex }}</h2>
       <ul class="stats">

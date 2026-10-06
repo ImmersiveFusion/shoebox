@@ -449,6 +449,57 @@ button.transport.rewind {
   &:hover { color: var(--teal-bright); border-color: var(--teal); }
 }
 .runcount { color: var(--muted); }
+
+// Timed firing. Quiet when off; when on, a pulsing dot in teal, never magenta,
+// because a running timer is ours and is not damage.
+.timer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+
+  label.inline { display: inline; margin: 0; }
+  select, input[type="number"] { width: auto; }
+  input[type="number"] {
+    width: 4.5rem;
+    background: var(--navy);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+  }
+  .unit { color: var(--muted); }
+
+  &.is-firing { border-color: rgba(47, 212, 196, 0.55); }
+
+  .firing-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--teal);
+    box-shadow: 0 0 0 0 rgba(47, 212, 196, 0.6);
+    animation: firing-pulse 1.6s ease-out infinite;
+  }
+  .firing-text { color: var(--ink); }
+  .firing-skipped, .firing-error { color: var(--muted); font-size: 0.85rem; }
+  .firing-note { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+  button.timer-start, button.timer-extend {
+    background: transparent;
+    color: var(--teal);
+    border: 1px solid rgba(47, 212, 196, 0.45);
+  }
+  button.timer-stop {
+    background: linear-gradient(135deg, var(--teal-bright), var(--teal));
+    color: #04121a;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+}
+
+@keyframes firing-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(47, 212, 196, 0.6); }
+  100% { box-shadow: 0 0 0 10px rgba(47, 212, 196, 0); }
+}
 .otlp { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
 
 // Sits at the end of the control row, after the line saying where this instance

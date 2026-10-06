@@ -1,5 +1,5 @@
-import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal } from '@angular/core';
-import { Subject, debounceTime } from 'rxjs';
+import { Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, inject, signal } from '@angular/core';
+import { Subject, Subscription, debounceTime, interval } from 'rxjs';
 import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example, Outcome, outcomeOf } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import {
@@ -11,6 +11,17 @@ import {
 } from './diagram-url';
 import { decorate } from './diagram-style';
 import { flyRun, markUntaken } from './span-flight';
+import {
+  DEFAULT_DURATION_SECONDS,
+  DEFAULT_INTERVAL_SECONDS,
+  DURATIONS,
+  EXTEND_SECONDS,
+  FiringStatus,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+  clampInterval,
+  describeFiring,
+} from './timed-firing';
 
 @Component({
   selector: 'app-shoebox',
@@ -18,7 +29,7 @@ import { flyRun, markUntaken } from './span-flight';
   styleUrls: ['./shoebox.component.scss'],
   standalone: false,
 })
-export class ShoeboxComponent implements OnInit {
+export class ShoeboxComponent implements OnInit, OnDestroy {
   private readonly service = inject(ShoeboxService);
   private readonly edits = new Subject<void>();
 
@@ -44,6 +55,22 @@ export class ShoeboxComponent implements OnInit {
 
   runIndex = 1;
   shoeboxId = '';
+
+  // ── Timed firing ──
+  //
+  // The server owns the timer; this only starts it, shows it and stops it. Off
+  // until somebody presses start, and there is no choice without an end.
+  readonly durations = DURATIONS;
+  readonly minInterval = MIN_INTERVAL_SECONDS;
+  readonly maxInterval = MAX_INTERVAL_SECONDS;
+  durationSeconds = DEFAULT_DURATION_SECONDS;
+  intervalSeconds = DEFAULT_INTERVAL_SECONDS;
+
+  /** The running timer, or null when nothing is firing. */
+  readonly firing = signal<FiringStatus | null>(null);
+  /** Why the last start, extend or stop was refused, or how the last timer ended. */
+  readonly firingNote = signal<string | null>(null);
+  private firingPoll: Subscription | null = null;
 
   /**
    * Which panel, if any, is filling the screen. Both panes are cramped by
@@ -98,6 +125,9 @@ export class ShoeboxComponent implements OnInit {
     this.shoeboxId = readShoeboxFromUrl() ?? '';
     if (this.shoeboxId) {
       writeShoeboxToUrl(this.shoeboxId);
+      // A link into a shoebox that is already firing should say so, with its stop
+      // button, rather than leave the person wondering where the traces come from.
+      this.checkFiring();
     } else {
       this.service.createShoebox().subscribe(r => {
         this.shoeboxId = r.shoeboxId;
@@ -160,6 +190,79 @@ export class ShoeboxComponent implements OnInit {
 
   private stopFlight: (() => void) | null = null;
 
+  /** Fires the current diagram on a timer, for the chosen time and no longer. */
+  startFiring(): void {
+    if (!this.shoeboxId) return;
+    this.intervalSeconds = clampInterval(this.intervalSeconds);
+    this.firingNote.set(null);
+    this.service
+      .startFiring(this.diagram, this.shoeboxId, this.durationSeconds, this.intervalSeconds)
+      .subscribe({
+        next: outcome => this.showFiring(outcome.status),
+        error: e => this.firingNote.set(this.errorText(e)),
+      });
+  }
+
+  stopFiring(): void {
+    if (!this.shoeboxId) return;
+    this.service.stopFiring(this.shoeboxId).subscribe({
+      next: () => this.ended('Stopped'),
+      error: e => this.firingNote.set(this.errorText(e)),
+    });
+  }
+
+  extendFiring(): void {
+    if (!this.shoeboxId) return;
+    this.service.extendFiring(this.shoeboxId, EXTEND_SECONDS).subscribe({
+      next: outcome => {
+        this.showFiring(outcome.status);
+        this.firingNote.set(outcome.clamped ? 'Extended up to the two hour limit on time left.' : null);
+      },
+      error: e => this.firingNote.set(this.errorText(e)),
+    });
+  }
+
+  describeFiring(status: FiringStatus): string {
+    return describeFiring(status);
+  }
+
+  ngOnDestroy(): void {
+    this.firingPoll?.unsubscribe();
+  }
+
+  private checkFiring(): void {
+    this.service.firingStatus(this.shoeboxId).subscribe({
+      next: status => {
+        if ('stopsAt' in status && status.firing) {
+          this.showFiring(status);
+        } else if (this.firing()) {
+          this.ended('Finished');
+        }
+      },
+      error: () => undefined,
+    });
+  }
+
+  private showFiring(status: FiringStatus): void {
+    this.firing.set(status);
+    // Polled rather than pushed: one small GET every two seconds, only while a
+    // timer is running, and it stops the moment the server says it has ended.
+    this.firingPoll ??= interval(2000).subscribe(() => this.checkFiring());
+  }
+
+  private ended(how: string): void {
+    const last = this.firing();
+    this.firing.set(null);
+    this.firingPoll?.unsubscribe();
+    this.firingPoll = null;
+    if (last) this.firingNote.set(`${how} after ${last.runs} ${last.runs === 1 ? 'run' : 'runs'}.`);
+  }
+
+  private errorText(e: unknown): string {
+    const body = (e as { error?: { error?: string } })?.error;
+    return body?.error ?? 'The timer could not be changed. Try again in a moment.';
+  }
+
   resetRuns(): void {
     this.runIndex = 1;
     this.result.set(null);
@@ -200,6 +303,11 @@ export class ShoeboxComponent implements OnInit {
   private async refresh(): Promise<void> {
     await this.render();
     this.service.parse(this.diagram).subscribe(t => this.topology.set(t));
+    // A running timer walks whatever it was last sent, so send it the edit. The
+    // next run picks it up; nothing restarts.
+    if (this.firing() && this.shoeboxId) {
+      this.service.updateFiringDiagram(this.diagram, this.shoeboxId).subscribe({ error: () => undefined });
+    }
     await writeDiagramToUrl(this.diagram);
     this.urlTooLong.set(window.location.href.length > URL_LENGTH_WARNING);
   }

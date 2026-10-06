@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { FiringOutcome, FiringStatus } from './timed-firing';
 
 export interface ParsedPod {
   id: string;
@@ -92,5 +93,45 @@ export class ShoeboxService {
 
   createShoebox(): Observable<{ shoeboxId: string }> {
     return this.http.post<{ shoeboxId: string }>('/shoebox', {});
+  }
+
+  /**
+   * Fires the diagram on a timer. A duration is not optional: the server refuses
+   * a timer without one and caps it at two hours, so it always stops by itself.
+   */
+  startFiring(
+    diagram: string,
+    shoeboxId: string,
+    durationSeconds: number,
+    intervalSeconds: number,
+  ): Observable<FiringOutcome> {
+    return this.http.post<FiringOutcome>(this.fireUrl('/fire', shoeboxId), {
+      diagram,
+      durationSeconds,
+      intervalSeconds,
+    });
+  }
+
+  /** Whether this shoebox is firing on a timer, and how far along it is. */
+  firingStatus(shoeboxId: string): Observable<FiringStatus | { firing: false }> {
+    return this.http.get<FiringStatus | { firing: false }>(this.fireUrl('/fire', shoeboxId));
+  }
+
+  /** The diagram the timer's next run walks. */
+  updateFiringDiagram(diagram: string, shoeboxId: string): Observable<FiringOutcome> {
+    return this.http.put<FiringOutcome>(this.fireUrl('/fire/diagram', shoeboxId), { diagram });
+  }
+
+  /** More time, capped by the server so the time left never passes two hours. */
+  extendFiring(shoeboxId: string, seconds: number): Observable<FiringOutcome> {
+    return this.http.post<FiringOutcome>(this.fireUrl('/fire/extend', shoeboxId), { seconds });
+  }
+
+  stopFiring(shoeboxId: string): Observable<{ firing: false; stopped: boolean }> {
+    return this.http.delete<{ firing: false; stopped: boolean }>(this.fireUrl('/fire', shoeboxId));
+  }
+
+  private fireUrl(path: string, shoeboxId: string): string {
+    return `${path}?shoeboxId=${encodeURIComponent(shoeboxId)}`;
   }
 }

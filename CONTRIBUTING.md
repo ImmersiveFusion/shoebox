@@ -69,6 +69,7 @@ see [SECURITY.md](https://github.com/ImmersiveFusion/.github/blob/main/SECURITY.
 | `src/Shoebox.Api/Topology/` | Mermaid parsing and the topology model |
 | `src/Shoebox.Api/Run/` | The runner that walks a topology for one request |
 | `src/Shoebox.Api/Emit/` | OTLP export and the tracer pool |
+| `src/Shoebox.Api/Fire/` | Timed firing: a diagram fired on a schedule for a bounded time |
 | `src/Shoebox.Api/Share/` | Share links, which encode the diagram into the URL |
 | `src/Shoebox.Api/Session/` | Per-session middleware and telemetry wiring |
 | `src/Shoebox.Spa/` | The Angular front end |

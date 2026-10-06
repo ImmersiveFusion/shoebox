@@ -12,9 +12,12 @@ Base URL: https://shoebox.deepcube.ai
 
 ## The one rule
 
-**Nothing moves until you fire.** I do not run on a timer and I do not run when you
+**Nothing moves until you fire.** I do not run on my own and I do not run when you
 paste. You fired one request, you know its path, and you know what you broke. That
 is the whole lesson, and it is why every endpoint below is explicit.
+
+There is a timer (section 6), and it keeps the rule: only a request starts it, it
+always has an end of at most two hours, and it stops by itself.
 
 ## Before you paste anything: what leaves your hands
 
@@ -39,6 +42,11 @@ me (`GET /otlp/status` will tell you where), and nothing about a run can change 
 | POST | `/topology/parse` | read a diagram back without emitting anything |
 | POST | `/run?shoeboxId=…` | fire exactly one request through the diagram |
 | GET | `/otlp/status` | whether telemetry is going anywhere, and where |
+| POST | `/fire?shoeboxId=…` | fire the diagram on a timer, for a bounded time |
+| GET | `/fire?shoeboxId=…` | whether that shoebox is firing, runs so far, when it stops |
+| PUT | `/fire/diagram?shoeboxId=…` | change the diagram the timer's next run walks |
+| POST | `/fire/extend?shoeboxId=…` | add time, capped at two hours left |
+| DELETE | `/fire?shoeboxId=…` | stop the timer now |
 
 ### 1. Get a shoebox
 
@@ -249,6 +257,30 @@ every time. A missing or non-positive `runIndex` is treated as 1.
 - `spanCount` / `failedSpanCount` — a zero `spanCount` with sensible-looking hops means
   something is wrong on my side, not yours.
 
+### 6. Fire on a timer (only when a human asks for it)
+
+For steady telemetry over a few minutes, not for one trace:
+
+```
+POST /fire?shoeboxId=1676820325a4497796d0293c2078d205
+{"diagram":"flowchart TD\n  gw[Gateway] --> orders[Order Service]",
+ "durationSeconds":900, "intervalSeconds":5}
+```
+
+- `durationSeconds` is **required**, and at most 7200. There is no way to fire
+  forever; a missing or larger value is a 400 that says so.
+- `intervalSeconds` is 1 to 60, 5 if you leave it out.
+- The first run goes at once. `GET /fire?shoeboxId=…` returns `firing`, `runs`,
+  `skipped`, `stopsAt`, `remainingSeconds` and `lastTraceId`.
+- `PUT /fire/diagram` with `{"diagram":…}` changes what the **next** run walks.
+- `POST /fire/extend` with `{"seconds":…}` adds time; it is clamped so the time left
+  never passes two hours, and `clamped: true` tells you when that happened.
+- `DELETE /fire?shoeboxId=…` stops it. Otherwise it stops by itself at `stopsAt`.
+- One timer per shoebox, one per source address, a few per instance. A restart of
+  this instance ends every timer and none come back.
+
+Tell the human it is running, when it will stop, and how to stop it.
+
 ## Handing a diagram to a human
 
 A link carries the whole diagram **and the shoebox it ran in**, so a link is a
@@ -317,7 +349,9 @@ because the far end refused it. Check for the trace id.
    noticed, and it is the one that costs trust.
 3. **One run per instruction.** I am a teaching tool, not a load generator. Fire
    because a human asked, or because you are deliberately walking `runIndex` through
-   the replicas. Do not loop. See the pacing below — it is enforced, not advisory.
+   the replicas. Do not loop: if a human wants steady traffic, start a timer
+   (section 6) because they asked, instead of looping `/run`. See the pacing below:
+   it is enforced, not advisory.
 4. **Report my `notes` and my `hops`, not your expectations.** If the run says
    nothing failed and you expected a failure, the diagram is the thing to look at.
 5. **Rename before you paste.** See the top of this file. You are usually the one

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Threading.RateLimiting;
 using Shoebox.Api.Emit;
+using Shoebox.Api.Fire;
 using Shoebox.Api.Run;
 using Shoebox.Api.Share;
 using Shoebox.Api.Topology;
@@ -87,6 +88,7 @@ builder.Services.AddRateLimiter(options =>
                 source = "twice that from one address, however many shoeboxes it mints",
                 shoebox = $"{MintBurst} new shoeboxes, then one every {mintPeriod.TotalMinutes:0} minutes, per address",
                 parse = "60 a minute per address, and it emits nothing",
+                fire = "starting, extending and editing a timer share the parse allowance",
             },
             hint = "https://shoebox.deepcube.ai/llms.txt explains the pacing, and /topology/parse is free",
         }, token);
@@ -155,8 +157,13 @@ builder.Services.AddRateLimiter(options =>
         // Parsing emits nothing and costs a regex pass, so it stays generous: it is
         // the endpoint a careful caller uses to check itself before firing, and
         // punishing that would teach exactly the wrong habit.
+        //
+        // Timed firing's control calls share it. They emit nothing themselves; the
+        // runs a timer fires are bounded by the timer (rate, duration, and how many
+        // may exist at once), not by this.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
             IsPostTo(http, "/topology/parse") || IsPostTo(http, "/share")
+            || IsPostTo(http, "/fire") || IsPutTo(http, "/fire")
                 ? RateLimitPartition.GetFixedWindowLimiter(
                     SourceKey(http),
                     _ => new FixedWindowRateLimiterOptions
@@ -175,6 +182,10 @@ builder.Services.AddRateLimiter(options =>
 // request its own partition and silently disable the limit.
 static bool IsPostTo(HttpContext http, string path) =>
     HttpMethods.IsPost(http.Request.Method)
+    && http.Request.Path.StartsWithSegments(path, StringComparison.OrdinalIgnoreCase);
+
+static bool IsPutTo(HttpContext http, string path) =>
+    HttpMethods.IsPut(http.Request.Method)
     && http.Request.Path.StartsWithSegments(path, StringComparison.OrdinalIgnoreCase);
 
 static string SourceKey(HttpContext http)
@@ -207,6 +218,15 @@ if (otlpConfigError is not null)
 // of many providers is settled by evidence rather than argument.
 builder.Services.AddSingleton(new PodTracerPool(otlpTarget));
 builder.Services.AddSingleton<TopologyRunner>();
+
+// Timed firing. In memory only: a restart comes back with nothing firing, always.
+// Registered as a hosted service as well as a singleton so that shutdown cancels
+// every timer rather than leaving one to fire into a process that is going away.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.Configure<TimedFiringOptions>(builder.Configuration.GetSection(TimedFiringOptions.SectionName));
+builder.Services.AddSingleton<IRunFirer, TopologyRunFirer>();
+builder.Services.AddSingleton<TimedFiringService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<TimedFiringService>());
 
 builder.Services.AddSpaStaticFiles(configuration =>
 {
@@ -298,6 +318,64 @@ app.MapPost("/run", (RunRequest request, TopologyRunner runner, HttpRequest http
     return Results.Ok(result);
 }).WithName("Run");
 
+// ── Timed firing ─────────────────────────────────────────────────────────────
+//
+// Fire the current diagram on a schedule, for a bounded time. Still the user's
+// trigger: nothing starts on its own, a duration is required, two hours is the
+// ceiling at start and after any extension, and it stops by itself when the time
+// is up. Off is the default and the only state a restart comes back in.
+//
+// The diagram is sent with the start and again whenever it changes, and every run
+// parses the latest one, so an edit takes effect on the next run.
+app.MapPost("/fire", (FireRequest request, TimedFiringService firing, HttpRequest http) =>
+    FiringResult(firing.Start(
+        http.GetShoeboxId(),
+        SourceKey(http.HttpContext),
+        request.Diagram,
+        AsSpan(request.DurationSeconds),
+        AsSpan(request.IntervalSeconds))))
+   .WithName("StartFiring");
+
+app.MapGet("/fire", (TimedFiringService firing, HttpRequest http) =>
+    firing.Status(http.GetShoeboxId()) is { } status
+        ? Results.Ok(status)
+        : Results.Ok(new { firing = false, shoeboxId = http.GetShoeboxId() }))
+   .WithName("FiringStatus");
+
+app.MapPut("/fire/diagram", (DiagramRequest request, TimedFiringService firing, HttpRequest http) =>
+    FiringResult(firing.UpdateDiagram(http.GetShoeboxId(), request.Diagram)))
+   .WithName("UpdateFiringDiagram");
+
+app.MapPost("/fire/extend", (ExtendRequest request, TimedFiringService firing, HttpRequest http) =>
+    FiringResult(firing.Extend(
+        http.GetShoeboxId(),
+        AsSpan(request.Seconds))))
+   .WithName("ExtendFiring");
+
+app.MapDelete("/fire", (TimedFiringService firing, HttpRequest http) =>
+    Results.Ok(new { firing = false, stopped = firing.Stop(http.GetShoeboxId()) }))
+   .WithName("StopFiring");
+
+// Seconds off the wire. Absurd values are pinned rather than allowed to overflow into a 500, and
+// then refused by the same range checks as any other out-of-range number.
+static TimeSpan? AsSpan(double? seconds) => seconds switch
+{
+    null => null,
+    > 1e9 => TimeSpan.MaxValue,
+    < -1e9 => TimeSpan.MinValue,
+    { } v => TimeSpan.FromSeconds(v),
+};
+
+static IResult FiringResult(FiringOutcome outcome) => outcome.Rejection switch
+{
+    FiringRejection.None => Results.Ok(new { status = outcome.Status, clamped = outcome.Clamped, message = outcome.Message }),
+    FiringRejection.Invalid => Results.BadRequest(new { error = outcome.Message }),
+    FiringRejection.NotFiring => Results.NotFound(new { error = outcome.Message }),
+    FiringRejection.AlreadyFiring => Results.Conflict(new { error = outcome.Message }),
+    FiringRejection.SourceFull => Results.Json(new { error = outcome.Message }, statusCode: StatusCodes.Status429TooManyRequests),
+    _ => Results.Json(new { error = outcome.Message }, statusCode: StatusCodes.Status503ServiceUnavailable),
+};
+
 // A link somebody can click, because the callers who most need one cannot build it: the fragment is
 // deflate-raw then base64url, and a model cannot deflate. Emits nothing, so it is paced with /parse
 // rather than with /run.
@@ -354,3 +432,11 @@ public record DiagramRequest(string Diagram);
 public record RunRequest(string Diagram, int RunIndex);
 
 public record ShareRequest(string Diagram, string? ShoeboxId);
+
+/// <summary>
+/// Start a timer. <c>DurationSeconds</c> is required and at most 7200; <c>IntervalSeconds</c>
+/// defaults to 5 and must lie between 1 and 60 unless the operator configured otherwise.
+/// </summary>
+public record FireRequest(string Diagram, double? DurationSeconds, double? IntervalSeconds);
+
+public record ExtendRequest(double? Seconds);

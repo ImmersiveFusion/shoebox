@@ -20,14 +20,17 @@ safe to hand to a stranger and cheap to run.
 2. **Break a call.** A label on an edge is all it takes.
 3. **Fire one request.** Nothing moves until you say so. That is the point: you
    fired one request, you know its path, and you know what you broke.
-4. **Read what it says back.** The dot flies the path the request actually took,
+4. **Or fire it on a timer, for a while.** When you want steady telemetry rather
+   than one trace, fire the current diagram every few seconds for a set time. It
+   always has an end, and it stops by itself. See [Timed firing](#timed-firing).
+5. **Read what it says back.** The dot flies the path the request actually took,
    arrows it never crossed fade, and the run's **notes** appear under the result:
    a queue nothing consumed, a line that could not be read, a cycle it did not go
    round twice. That panel is the only place the run can tell you it did not match
    the diagram you drew -- the trace looks complete either way -- so it is worth
    reading before believing the picture.
-5. **Start from an example.** Eighteen prebaked scenarios, grouped.
-6. **Share the link.** The diagram travels in the URL, so a link is a runnable
+6. **Start from an example.** Eighteen prebaked scenarios, grouped.
+7. **Share the link.** The diagram travels in the URL, so a link is a runnable
    repro.
 
 The diagram lives in the URL **fragment**, not the query string. That is a privacy
@@ -124,6 +127,65 @@ Each simulated pod gets its own `TracerProvider` with a Resource carrying
 `service.name`, and its own `ActivitySource`. That is the same pattern
 [Snowglobe](https://github.com/ImmersiveFusion/snowglobe) runs at 28 services and
 59 pods, so the shape of the output is proven rather than invented here.
+
+## Timed firing
+
+Timed firing: fire a diagram on a schedule for a bounded time. One request per
+press is the lesson; a few minutes of steady traffic is what a dashboard, an alert
+or a service map needs before it shows anything.
+
+In the UI, under the fire button: pick how long (5 minutes to 2 hours) and how
+often (one run every 5 seconds by default), and press **Start**. While it runs the
+panel says it is firing, how many runs it has fired, and the time it will stop,
+with **Stop** and **+15 min** beside it. Edit the diagram while it runs and the
+next run walks the edited version; nothing restarts.
+
+From the command line:
+
+```bash
+# Start: a duration is required, 2 hours at most. The interval defaults to 5 s.
+curl -X POST "http://localhost:5168/fire?shoeboxId=$ID" \
+  -H "Content-Type: application/json" \
+  -d '{"diagram":"flowchart LR\n  api[Orders API] -->|broken| db[(SQL Server)]","durationSeconds":900,"intervalSeconds":5}'
+
+curl "http://localhost:5168/fire?shoeboxId=$ID"                      # status: runs, stopsAt
+curl -X PUT "http://localhost:5168/fire/diagram?shoeboxId=$ID" \
+  -H "Content-Type: application/json" -d '{"diagram":"..."}'          # next run uses this
+curl -X POST "http://localhost:5168/fire/extend?shoeboxId=$ID" \
+  -H "Content-Type: application/json" -d '{"seconds":900}'            # more time, capped
+curl -X DELETE "http://localhost:5168/fire?shoeboxId=$ID"             # stop now
+```
+
+The rules, all enforced by the server:
+
+- **There is no open-ended mode.** Starting without `durationSeconds` is a 400, and
+  so is anything over 7200 (2 hours). When the time is up the timer stops by itself.
+  Extending is its own request, and is clamped so the time left never passes 2 hours;
+  the response says `clamped: true` when it was.
+- **Off is the default, and a restart puts it back.** Timers live in memory only and
+  are never written anywhere, so a restart or a deploy comes back with nothing
+  firing. Closing the tab does not stop a timer, but its end time still does.
+- **The rate is bounded.** One run every 1 to 60 seconds, 5 if you do not say.
+- **Runs never pile up.** If a run is still going when the next one is due, that
+  tick is skipped and counted (`skipped`), not queued.
+- **Few timers at once.** At most 4 per instance and 1 per source address by
+  default; past that a start is refused with 503 or 429. Shutdown cancels them all.
+
+The diagram a timer fires is the one you last sent it, held in memory for as long as
+it is firing and dropped when it stops. That is the only time the server keeps a
+diagram between requests, and it is the same text every `POST /run` already carries.
+
+Operators can make it smaller or switch it off, but not open-ended:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `TimedFiring:MaxActive` | `4` | Timers per instance. `0` switches timed firing off |
+| `TimedFiring:MaxPerSource` | `1` | Timers per source address |
+| `TimedFiring:DefaultInterval` | `00:00:05` | Interval when none is asked for |
+| `TimedFiring:MinInterval` | `00:00:01` | Shortest interval accepted |
+| `TimedFiring:MaxInterval` | `00:01:00` | Longest interval accepted |
+
+The 2 hour ceiling is not a setting.
 
 ## Where the telemetry goes
 
@@ -240,6 +302,7 @@ restated in every 429 alongside a `Retry-After`:
 | `POST /run` per source address | twice that, across every shoebox it mints |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` and `POST /share` per source address | 60 a minute |
+| Starting, extending and editing a timer (`/fire`) | shares the 60 a minute above |
 
 The burst is deliberate: replica selection is round robin on `runIndex`, so seeing what
 `broken on #3` of five does takes five runs, and a burst of twenty buys two of those
