@@ -429,6 +429,68 @@ namespace Shoebox.Api.UnitTests.Fire
                 .Rejection.Should().Be(FiringRejection.Invalid);
         }
 
+        // ── What a timer will hold ───────────────────────────────────────────
+
+        [Test]
+        public void ADiagramOverTheSizeCap_IsRefused_AtStartAndOnEdit()
+        {
+            var huge = DiagramA + "\n%% " + new string('x', TimedFiringService.MaxDiagramBytes);
+
+            var start = _service.Start(Shoebox, Source, huge, TimeSpan.FromMinutes(1), null);
+            start.Rejection.Should().Be(FiringRejection.TooLarge);
+            start.Message.Should().Contain("256 KB");
+            _service.ActiveCount.Should().Be(0);
+
+            StartDefault();
+            _service.UpdateDiagram(Shoebox, huge).Rejection.Should().Be(FiringRejection.TooLarge);
+            _clock.Advance(FiveSeconds);
+            _firer.Calls.Last().Diagram.Should().Be(DiagramA, "a refused edit leaves the last good diagram in place");
+        }
+
+        [TestCase("flowchart LR\n  %% nothing here")]
+        [TestCase("flowchart LR\n  a[A] --> b[B]\n  b --> a")]
+        [TestCase("this is not mermaid at all")]
+        public void ADiagramThatWouldNotRun_IsRefusedWhenSent_NotDiscoveredLater(string diagram)
+        {
+            var start = _service.Start(Shoebox, Source, diagram, TimeSpan.FromMinutes(1), null);
+
+            start.Rejection.Should().Be(FiringRejection.Invalid);
+            start.Message.Should().Contain("would not run");
+            _firer.Calls.Should().BeEmpty();
+
+            StartDefault();
+            _service.UpdateDiagram(Shoebox, diagram).Rejection.Should().Be(FiringRejection.Invalid);
+        }
+
+        // ── Extending at the very end ────────────────────────────────────────
+
+        [Test]
+        public void Extend_AfterTheEndButBeforeTheExpiryRuns_IsNotFiring_NotAnError()
+        {
+            // The race: the clock has passed the end, and the expiry callback has not run yet.
+            // A clock that reads ahead of the timers it hands out reproduces it exactly.
+            var skewed = new SkewedClock(_clock);
+            using var service = new TimedFiringService(skewed, _firer, Options.Create(new TimedFiringOptions()));
+            service.Start(Shoebox, Source, DiagramA, TimeSpan.FromMinutes(1), null).Ok.Should().BeTrue();
+
+            skewed.Skew = TimeSpan.FromMinutes(1);
+
+            var act = () => service.Extend(Shoebox, TimeSpan.FromMinutes(5));
+            act.Should().NotThrow();
+            act().Rejection.Should().Be(FiringRejection.NotFiring);
+        }
+
+        /// <summary>Hands out the fake clock's timers, but reads the time <see cref="Skew"/> ahead of it.</summary>
+        private sealed class SkewedClock(FakeTimeProvider inner) : TimeProvider
+        {
+            public TimeSpan Skew { get; set; }
+
+            public override DateTimeOffset GetUtcNow() => inner.GetUtcNow() + Skew;
+
+            public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+                inner.CreateTimer(callback, state, dueTime, period);
+        }
+
         // ── The real firer ───────────────────────────────────────────────────
 
         [Test]

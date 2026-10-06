@@ -171,6 +171,17 @@ The rules, all enforced by the server:
 - **Few timers at once.** At most 4 per instance and 1 per source address by
   default; past that a start is refused with 503 or 429. Shutdown cancels them all.
 
+Two things the caps do not do, stated plainly. The per-source cap keys on the first
+`X-Forwarded-For` value, the same trust model as the `/run` limits, so a client
+that sets that header itself can claim to be several sources: the global cap is
+the real bound on what one instance fires. And a timer belongs to a shoebox, not to
+a person: anyone holding the shoebox id can see, edit, extend or stop it, exactly
+as anyone holding it can fire runs into it today.
+
+A diagram sent to a timer is checked when it arrives: over 256 KB is a 413, and one
+that would not run at all (no services, or no entry point) is a 400 rather than a
+timer that fails quietly on every tick.
+
 The diagram a timer fires is the one you last sent it, held in memory for as long as
 it is firing and dropped when it stops. That is the only time the server keeps a
 diagram between requests, and it is the same text every `POST /run` already carries.

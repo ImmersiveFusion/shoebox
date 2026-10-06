@@ -1,4 +1,6 @@
+using System.Text;
 using Shoebox.Api.Run;
+using Shoebox.Api.Topology;
 
 namespace Shoebox.Api.Fire;
 
@@ -7,6 +9,7 @@ public enum FiringRejection
 {
     None,
     Invalid,
+    TooLarge,
     NotFiring,
     AlreadyFiring,
     InstanceFull,
@@ -73,6 +76,12 @@ public sealed class TimedFiringService : IHostedService, IDisposable
     private readonly ILogger<TimedFiringService>? _logger;
     private bool _shutDown;
 
+    /// <summary>
+    /// The largest diagram a timer will hold, in UTF-8 bytes. A timer keeps its diagram in memory for
+    /// up to two hours, so this is what bounds that memory; it is far past any diagram a person draws.
+    /// </summary>
+    public const int MaxDiagramBytes = 256 * 1024;
+
     public TimedFiringService(
         TimeProvider time,
         IRunFirer firer,
@@ -106,10 +115,7 @@ public sealed class TimedFiringService : IHostedService, IDisposable
                 "a shoeboxId is required: it is how the runs are found again, as shoebox.id on every span");
         }
 
-        if (string.IsNullOrWhiteSpace(diagram))
-        {
-            return FiringOutcome.Refuse(FiringRejection.Invalid, "a diagram is required");
-        }
+        if (CheckDiagram(diagram) is { } refused) return refused;
 
         if (duration is null || duration <= TimeSpan.Zero)
         {
@@ -203,12 +209,21 @@ public sealed class TimedFiringService : IHostedService, IDisposable
             }
 
             var now = _time.GetUtcNow();
+
+            // Its end has arrived and the expiry callback has not run yet. Treated as already
+            // ended rather than revived: extending is for a timer that is still running.
+            if (firing.Ended || firing.StopsAt <= now)
+            {
+                return FiringOutcome.Refuse(FiringRejection.NotFiring, "this shoebox's timer has just ended, so there is nothing to extend");
+            }
+
             var ceiling = now + TimedFiringLimits.MaxDuration;
             // Compared before adding, so an absurd extension cannot overflow the clock.
             var clamped = by.Value >= TimedFiringLimits.MaxDuration || firing.StopsAt + by.Value > ceiling;
 
             firing.StopsAt = clamped ? ceiling : firing.StopsAt + by.Value;
-            firing.Expiry?.Change(firing.StopsAt - now, Timeout.InfiniteTimeSpan);
+            var dueIn = firing.StopsAt - now;
+            firing.Expiry?.Change(dueIn > TimeSpan.Zero ? dueIn : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
 
             return new FiringOutcome(FiringRejection.None, clamped
                     ? "extended only as far as the 2 hour ceiling on time left"
@@ -220,10 +235,7 @@ public sealed class TimedFiringService : IHostedService, IDisposable
     /// <summary>The diagram the next run walks. Takes effect on the next tick, with no restart.</summary>
     public FiringOutcome UpdateDiagram(string? shoeboxId, string? diagram)
     {
-        if (string.IsNullOrWhiteSpace(diagram))
-        {
-            return FiringOutcome.Refuse(FiringRejection.Invalid, "a diagram is required");
-        }
+        if (CheckDiagram(diagram) is { } refused) return refused;
 
         lock (_gate)
         {
@@ -232,7 +244,7 @@ public sealed class TimedFiringService : IHostedService, IDisposable
                 return FiringOutcome.Refuse(FiringRejection.NotFiring, "this shoebox is not firing");
             }
 
-            firing.Diagram = diagram;
+            firing.Diagram = diagram!;
             return new FiringOutcome(FiringRejection.None, null, StatusOf(firing, _time.GetUtcNow()));
         }
     }
@@ -288,6 +300,7 @@ public sealed class TimedFiringService : IHostedService, IDisposable
     {
         string diagram;
         int runIndex;
+        CancellationToken token = default;
         var expired = false;
         lock (_gate)
         {
@@ -317,6 +330,10 @@ public sealed class TimedFiringService : IHostedService, IDisposable
                 // Read now, not at start: the latest diagram this shoebox sent is the one this
                 // run walks.
                 diagram = firing.Diagram;
+
+                // Taken under the lock, while the timer is known not to have ended, because End
+                // disposes the source once it has.
+                token = firing.Cancellation.Token;
             }
         }
 
@@ -329,7 +346,7 @@ public sealed class TimedFiringService : IHostedService, IDisposable
         Task<RunResult> run;
         try
         {
-            run = _firer.FireAsync(diagram, runIndex, firing.ShoeboxId, firing.Cancellation.Token);
+            run = _firer.FireAsync(diagram, runIndex, firing.ShoeboxId, token);
         }
         catch (Exception ex)
         {
@@ -384,9 +401,52 @@ public sealed class TimedFiringService : IHostedService, IDisposable
         // Reaches a run that has not started yet. A walk already under way is synchronous and
         // short, and finishes on its own.
         firing.Cancellation.Cancel();
+        firing.Cancellation.Dispose();
 
         _logger?.LogInformation("Timed firing ended for {ShoeboxId} ({Why}) after {Runs} runs",
             firing.ShoeboxId, why, firing.Runs);
+    }
+
+    /// <summary>
+    /// Refuses a diagram a timer should not hold: missing, too large, or one that would not run at
+    /// all. Checked when it is sent, so the refusal is a 400 the sender sees rather than a
+    /// lastError discovered later. The parser never throws; "would not run" means it found no
+    /// services, or no entry point to start a request from.
+    /// </summary>
+    private static FiringOutcome? CheckDiagram(string? diagram)
+    {
+        if (string.IsNullOrWhiteSpace(diagram))
+        {
+            return FiringOutcome.Refuse(FiringRejection.Invalid, "a diagram is required");
+        }
+
+        if (Encoding.UTF8.GetByteCount(diagram) > MaxDiagramBytes)
+        {
+            return FiringOutcome.Refuse(FiringRejection.TooLarge,
+                $"the diagram is over {MaxDiagramBytes / 1024} KB, which is more than a timer will hold. Shrink it");
+        }
+
+        Graph graph;
+        try
+        {
+            graph = MermaidParser.Parse(diagram);
+        }
+        catch (Exception ex)
+        {
+            return FiringOutcome.Refuse(FiringRejection.Invalid, $"the diagram could not be read: {ex.Message}");
+        }
+
+        if (graph.Pods.Count == 0 || graph.Entry is null)
+        {
+            var why = graph.Pods.Count == 0
+                ? "no services were found in it"
+                : "it has no entry point: every service is called by something, so there is nowhere to start";
+            var notes = graph.Notes.Count > 0 ? $" Notes: {string.Join(" ", graph.Notes.Take(3))}" : string.Empty;
+            return FiringOutcome.Refuse(FiringRejection.Invalid,
+                $"the diagram would not run: {why}. POST /topology/parse shows what was read.{notes}");
+        }
+
+        return null;
     }
 
     private static FiringStatus StatusOf(Firing f, DateTimeOffset now) => new(

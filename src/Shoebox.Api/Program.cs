@@ -370,6 +370,7 @@ static IResult FiringResult(FiringOutcome outcome) => outcome.Rejection switch
 {
     FiringRejection.None => Results.Ok(new { status = outcome.Status, clamped = outcome.Clamped, message = outcome.Message }),
     FiringRejection.Invalid => Results.BadRequest(new { error = outcome.Message }),
+    FiringRejection.TooLarge => Results.Json(new { error = outcome.Message }, statusCode: StatusCodes.Status413PayloadTooLarge),
     FiringRejection.NotFiring => Results.NotFound(new { error = outcome.Message }),
     FiringRejection.AlreadyFiring => Results.Conflict(new { error = outcome.Message }),
     FiringRejection.SourceFull => Results.Json(new { error = outcome.Message }, statusCode: StatusCodes.Status429TooManyRequests),
