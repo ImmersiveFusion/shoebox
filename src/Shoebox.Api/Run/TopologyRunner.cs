@@ -30,6 +30,11 @@ public sealed record Hop(string From, string To, bool Failed, int Ms);
 /// </summary>
 public sealed record NotTaken(string From, string To, string Reason);
 
+/// <param name="FailedSpanCount">
+/// Failed edges: one per broken call the run crossed, not one per red span. A broken
+/// call also turns every synchronous caller above it red, so a trace usually shows
+/// more ERROR spans than this. It counts causes, which is what a person fixes.
+/// </param>
 public sealed record RunResult(
     int RunIndex,
     string? TraceId,
@@ -192,7 +197,11 @@ public sealed class TopologyRunner
         return notes.ToList();
     }
 
-    private void Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
+    /// <returns>
+    /// The status description when this pod's span ended in error, so a synchronous
+    /// caller can fail with it too. Null when it did not.
+    /// </returns>
+    private string? Visit(Graph graph, Pod pod, Activity? parent, RunState state, int depth = 0, (Pod Queue, string MessageId)? via = null)
     {
         // A cycle in a pasted diagram is somebody's real architecture, not a bug.
         // Bound the walk rather than refusing to run it.
@@ -212,7 +221,7 @@ public sealed class TopologyRunner
                 "the request kept arriving back where it started and this run is a truncated " +
                 "prefix of an unbounded one rather than a picture of the system. " +
                 "Nothing below this point ran, and the hops and timings above it are still real.");
-            return;
+            return null;
         }
 
         if (depth > RunLimits.MaxDepth)
@@ -221,7 +230,7 @@ public sealed class TopologyRunner
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
             state.NoteOnce($"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle.");
-            return;
+            return null;
         }
 
         var instance = SelectInstance(pod, state.RunIndex);
@@ -277,6 +286,22 @@ public sealed class TopologyRunner
             }
         }
 
+        // An error in anything this pod called synchronously is this pod's error too:
+        // the caller did not get its answer. Left green, the error sat on one leaf and
+        // every service above it reported success, which is not what an unhandled
+        // exception does. Each synchronous caller fails the same way on its own return,
+        // so the error climbs the chain to the entry point.
+        //
+        // It stops at an async hop. A publish succeeds when the broker takes the
+        // message, so a consumer failing later is not the producer's error, and
+        // PublishAndDeliver discards what the consumer's Visit returns on purpose.
+        string? failure = null;
+        void Fail(string why)
+        {
+            failure ??= why;
+            activity?.SetStatus(ActivityStatusCode.Error, failure);
+        }
+
         foreach (var call in graph.From(pod.Id))
         {
             // Checked per edge, not only on entry. A pod fanning out to six
@@ -290,7 +315,7 @@ public sealed class TopologyRunner
             if (call.FailsFor(instance))
             {
                 state.Hop(pod.Id, target.Id, failed: true, ms: FailureMs);
-                EmitFailedCall(pod, target, call, activity, state, instance);
+                Fail(EmitFailedCall(pod, target, call, activity, state, instance));
                 continue;
             }
 
@@ -328,7 +353,7 @@ public sealed class TopologyRunner
                 }
 
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                Visit(graph, target, activity, state, depth + 1);
+                if (Visit(graph, target, activity, state, depth + 1) is { } phantomWhy) Fail(phantomWhy);
                 state.Leave(target.Id);
                 continue;
             }
@@ -394,11 +419,12 @@ public sealed class TopologyRunner
             }
 
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-            Visit(graph, target, activity, state, depth + 1);
+            if (Visit(graph, target, activity, state, depth + 1) is { } why) Fail(why);
             state.Leave(target.Id);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
+        return failure;
     }
 
     /// <summary>
@@ -471,7 +497,8 @@ public sealed class TopologyRunner
 
             received = true;
             state.Hop(queue.Id, consumer.Id, failed: false, ms: consumer.DefaultLatencyMs);
-            Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
+            // Discarded on purpose: an async hop is where error propagation stops. See Visit.
+            _ = Visit(graph, consumer, publish, state, depth + 1, via: (queue, messageId));
             state.Leave(consumer.Id);
         }
 
@@ -576,7 +603,7 @@ public sealed class TopologyRunner
     {
         var source = _pool.For(from.ServiceName, instance);
         using var activity = source.StartActivity(
-            SpanName(to),
+            to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, null).SpanName : SpanName(to),
             ActivityKind.Client,
             parent?.Context ?? default,
             startTime: state.Clock);
@@ -587,7 +614,7 @@ public sealed class TopologyRunner
         activity.SetEndTime(state.Clock.UtcDateTime);
         state.SpanCount++;
         activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client, from)) activity.SetTag(k, v);
     }
 
     /// <summary>
@@ -597,26 +624,47 @@ public sealed class TopologyRunner
     /// </summary>
     private const int FailureMs = 2;
 
-    private void EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
+    /// <returns>The status description, so the caller can fail with the same words.</returns>
+    private string EmitFailedCall(Pod from, Pod to, Call call, Activity? parent, RunState state, int instance)
     {
+        var reason = call.FailureReason ?? "call failed";
+
+        // A database answers a bad query with an error of its own, and that error is
+        // the only thing in the trace that names the cause. Without it the span said
+        // "wrong column" and nothing about which query or which column.
+        var db = to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, reason) : null;
+        var error = db?.Error;
+
         var source = _pool.For(from.ServiceName, instance);
         using var activity = source.StartActivity(
-            $"{from.ServiceName} -> {to.ServiceName}",
+            db?.SpanName ?? $"{from.ServiceName} -> {to.ServiceName}",
             ActivityKind.Client,
             parent?.Context ?? default);
 
-        if (activity is null) return;
+        var description = error?.Message ?? reason;
+        if (activity is null) return description;
 
         state.Clock = state.Clock.AddMilliseconds(FailureMs);
         activity.SetEndTime(state.Clock.UtcDateTime);
 
         state.SpanCount++;
         state.FailedSpanCount++;
-        var reason = call.FailureReason ?? "call failed";
-        activity.SetStatus(ActivityStatusCode.Error, reason);
-        activity.SetTag("error.type", reason);
+        activity.SetStatus(ActivityStatusCode.Error, description);
+        activity.SetTag("error.type", error is null ? reason : error.Code ?? error.Type);
         activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client)) activity.SetTag(k, v);
+        foreach (var (k, v) in SemanticTags(to, ActivityKind.Client, from, reason)) activity.SetTag(k, v);
+
+        if (error is not null)
+        {
+            activity.AddEvent(new ActivityEvent("exception", state.Clock, new ActivityTagsCollection
+            {
+                ["exception.type"] = error.Type,
+                ["exception.message"] = error.Message,
+                ["exception.stacktrace"] = error.StackTrace,
+            }));
+        }
+
+        return description;
     }
 
     /// <summary>
@@ -637,7 +685,7 @@ public sealed class TopologyRunner
 
     private static string SpanName(Pod pod) => pod.Kind switch
     {
-        PodKind.Datastore => $"SELECT {pod.ServiceName}",
+        PodKind.Datastore => DatabaseCall.Describe(pod, null, null).SpanName,
         PodKind.Cache => $"GET {pod.ServiceName}",
         PodKind.Queue => $"{pod.ServiceName} publish",
         PodKind.External => $"POST {pod.ServiceName}",
@@ -648,15 +696,17 @@ public sealed class TopologyRunner
     /// The shape somebody already drew decides the attributes. Nobody has to learn
     /// a convention to get semantically correct telemetry out.
     /// </summary>
-    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(Pod pod, ActivityKind kind)
+    private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(
+        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null)
     {
         yield return new("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
 
         switch (pod.Kind)
         {
             case PodKind.Datastore:
-                yield return new("db.system.name", "postgresql");
-                yield return new("db.query.text", $"SELECT * FROM {pod.ServiceName}");
+                // The statement that ran, not a placeholder: what a reader uses to
+                // find the query in the code is the query.
+                foreach (var tag in DatabaseCall.Describe(pod, caller, failure).Tags()) yield return tag;
                 break;
             case PodKind.Cache:
                 yield return new("db.system.name", "redis");
@@ -723,6 +773,7 @@ public sealed class TopologyRunner
         public string? RootTraceId { get; set; }
         public List<string> ServedBy { get; } = new();
         public int SpanCount { get; set; }
+        /// <summary>Failed edges, not red spans. See <see cref="RunResult"/>.</summary>
         public int FailedSpanCount { get; set; }
         private readonly List<string> _notes = new();
         public void Note(string n) => _notes.Add(n);

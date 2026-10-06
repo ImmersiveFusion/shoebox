@@ -55,6 +55,32 @@ semantic conventions, so nothing new has to be learned.
 | `q -->\|phantom\| b` | b never runs, so nothing consumes what q published |
 | `a --> q` and `q --> a` | a cycle: runs, terminates, reported in `cyclicPods` |
 
+**A broken call into a database fails the way the database would.** The diagram
+says what went wrong; the trace says it the way a driver does, so someone who has
+never seen the diagram can name the query and the cause:
+
+```mermaid
+flowchart LR
+  api[Orders API] -->|broken: wrong column 'Discount'| db[(SQL Server)]
+```
+
+The `SELECT dbo.Orders` client span is `ERROR` with `db.system.name`
+`microsoft.sql_server`, `db.query.text`
+`SELECT Id, Status, Total, Discount FROM dbo.Orders WHERE Id = @Id`,
+`db.response.status_code` `207`, and an `exception` event carrying a
+`Microsoft.Data.SqlClient.SqlException` with the message
+`Invalid column name 'Discount'.` and a stack trace, plus `server.address`
+`sql-server` and `server.port` `1433` (5432 for PostgreSQL). Every synchronous span
+above it, up to the entry point, fails with the same message; the error stops at a
+queue, because a publish succeeded once the broker took the message. A run's
+`failedSpanCount` counts failed edges, not red spans, so this one reports 1 while
+two spans are red. Leave out the quoted name and the column is
+`Discount`. `wrong table`, `syntax error` and `division by zero` get their own
+error numbers and statements, a label that does not say SQL Server gets the
+PostgreSQL equivalents (`42703: column "discount" does not exist`), and any other
+reason fails with the reason as the message. A healthy call to the same database
+carries the statement it ran and stays green.
+
 **A phantom is a dead consumer**, the same thing
 [Snowglobe](https://github.com/ImmersiveFusion/snowglobe) means by it: *services you
 did not know you had, so the platform infers the missing ones from the topology*.
