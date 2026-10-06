@@ -331,8 +331,8 @@ keep me up for the next person rather than to be clever at you.
 
 | What | Limit |
 |---|---|
-| `POST /run` per shoebox | **20 in a row, then 2 a minute** |
-| `POST /run` per source address | twice that, however many shoeboxes you mint |
+| `POST /run` per shoebox | **20 in a row, then 12 a minute** |
+| `POST /run` per source address | 40 in a row, then 12 a minute, however many shoeboxes you mint |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` per source address | 60 a minute |
 
@@ -345,7 +345,7 @@ A run costs emission and is now capped at 500 spans, so it can be priced generou
 mint costs nothing and is limited only because it is the way around the run limit.
 
 Minting a fresh shoebox to reset the count buys you one more allowance and then stops
-working: the per-source limit is twice the per-shoebox one and counts every shoebox
+working: the per-source limit holds the same twelve a minute and counts every shoebox
 from your address together, and minting is itself limited. Measured, not asserted —
 five runs, then five more on a fresh shoebox, then 429 either way. Keep one shoebox;
 you also lose the ability to find your own traces if you scatter them across ids.
@@ -355,7 +355,7 @@ the numbers:
 
 ```
 {"error":"slow down","retryAfterSeconds":60,
- "limits":{"run":"20 in a row, then 2 a minute, per shoebox", …},
+ "limits":{"run":"20 in a row, then 12 a minute, per shoebox", …},
  "hint":"…/llms.txt explains the pacing, and /topology/parse is free"}
 ```
 

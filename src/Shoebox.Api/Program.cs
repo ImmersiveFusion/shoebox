@@ -29,7 +29,7 @@ builder.Services.AddHttpContextAccessor();
 // a well-behaved caller can pace itself instead of discovering the limit by
 // hitting it.
 //
-// Twenty in a row, then two a minute, sustained. Replica selection is
+// Twenty in a row, then twelve a minute, sustained. Replica selection is
 // deterministic round robin on runIndex and the documented way to see
 // "broken on #3" of five is to fire five times, so the natural unit of work here
 // is a block of five: a burst of twenty buys two of those back to back with
@@ -40,16 +40,22 @@ builder.Services.AddHttpContextAccessor();
 // of a run changed. Before the cycle fix a single run was unbounded and one was
 // measured at 23,428 spans, which made this limiter the only ceiling on what the
 // shared backend received; a burst of five could put ~117,000 spans in it in
-// seconds. A run is now capped at RunLimits.MaxSpans and typically emits 20-44,
-// so a full hour at the rate below is a worst case of ~60,000 spans -- about
-// half of what one old burst could do in seconds. Loosening the rate is not a
-// loosening in real terms, it is charging the right price for what a run now
-// costs.
+// seconds. A run is now capped at RunLimits.MaxSpans and typically emits 20-44.
+//
+// Twelve a minute is one run every five seconds, the fastest the page's timed
+// firing goes. At the old two a minute the burst ran out in about two minutes
+// and every tick after that was a 429. The address layer is held to the same
+// twelve, so minting more shoeboxes buys a bigger burst and nothing more
+// sustained. An hour flat out from one address is 40 + 720 = 760 runs: about
+// 33,000 spans at a typical 44, and 380,000 if every run hit MaxSpans, which no
+// shipped example comes near. That ceiling is higher than the old one, and it
+// is the price of letting a page fire on a timer at all.
 //
 // Change RunBurst to 1 if the sustained rate should also be the instantaneous
 // one.
 var runPeriod = TimeSpan.FromMinutes(1);
 const int RunBurst = 20;
+const int RunsPerMinute = 12;
 
 // Minting is deliberately NOT on RunBurst, though it was.
 //
@@ -83,8 +89,8 @@ builder.Services.AddRateLimiter(options =>
             retryAfterSeconds = (int)Math.Ceiling(wait.TotalSeconds),
             limits = new
             {
-                run = $"{RunBurst} in a row, then 2 a minute, per shoebox",
-                source = "twice that from one address, however many shoeboxes it mints",
+                run = $"{RunBurst} in a row, then {RunsPerMinute} a minute, per shoebox",
+                source = $"{RunBurst * 2} in a row, then {RunsPerMinute} a minute, from one address, however many shoeboxes it mints",
                 shoebox = $"{MintBurst} new shoeboxes, then one every {mintPeriod.TotalMinutes:0} minutes, per address",
                 parse = "60 a minute per address, and it emits nothing",
             },
@@ -112,17 +118,17 @@ builder.Services.AddRateLimiter(options =>
                     _ => new TokenBucketRateLimiterOptions
                     {
                         TokenLimit = RunBurst,
-                        TokensPerPeriod = 2,
+                        TokensPerPeriod = RunsPerMinute,
                         ReplenishmentPeriod = runPeriod,
                         QueueLimit = 0,
                         AutoReplenishment = true,
                     })
                 : RateLimitPartition.GetNoLimiter<string>("not-a-run")),
 
-        // Per source, across every shoebox it holds. Twice the sender allowance, so
-        // two colleagues behind one office address are not fighting each other, and
-        // minting a fresh shoebox per run buys one more allowance rather than an
-        // unlimited supply of them.
+        // Per source, across every shoebox it holds. Twice the sender burst, so two
+        // colleagues behind one office address are not fighting each other over a
+        // first look, but the same sustained rate, so minting a fresh shoebox per
+        // run buys one more burst rather than more runs a minute.
         PartitionedRateLimiter.Create<HttpContext, string>(http =>
             IsPostTo(http, "/run")
                 ? RateLimitPartition.GetTokenBucketLimiter(
@@ -130,7 +136,7 @@ builder.Services.AddRateLimiter(options =>
                     _ => new TokenBucketRateLimiterOptions
                     {
                         TokenLimit = RunBurst * 2,
-                        TokensPerPeriod = 4,
+                        TokensPerPeriod = RunsPerMinute,
                         ReplenishmentPeriod = runPeriod,
                         QueueLimit = 0,
                         AutoReplenishment = true,

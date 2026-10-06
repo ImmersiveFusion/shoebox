@@ -46,7 +46,7 @@
                  exactly where somebody wants to fire one. -->
             <button type="button" class="transport play in-head"
                     *ngIf="expanded() === 'editor'"
-                    (click)="fire()"
+                    (click)="fire()" [disabled]="timed.running()"
                     title="Fire one request" aria-label="Fire one request">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -102,7 +102,7 @@
                  exactly where somebody wants to fire one. -->
             <button type="button" class="transport play in-head"
                     *ngIf="expanded() === 'viewer'"
-                    (click)="fire()"
+                    (click)="fire()" [disabled]="timed.running()"
                     title="Fire one request" aria-label="Fire one request">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -122,7 +122,7 @@
     </div>
 
     <section class="panel controls">
-      <button type="button" class="transport play" (click)="fire()"
+      <button type="button" class="transport play" (click)="fire()" [disabled]="timed.running()"
               title="Fire one request" aria-label="Fire one request">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
       </button>
@@ -146,6 +146,37 @@
       <a class="cta" href="https://github.com/ImmersiveFusion/shoebox#running-it"
          target="_blank" rel="noopener"
          title="How to run Shoebox locally, or deploy your own">Run your own</a>
+    </section>
+
+    <!-- Timed firing. Runs in this tab only, always ends, and is never saved. -->
+    <section class="panel timed">
+      <ng-container *ngIf="!timed.running(); else firing">
+        <label for="timed-duration">Keep firing</label>
+        <div class="timedrow">
+          <select id="timed-duration" [(ngModel)]="timedMinutes">
+            <option [ngValue]="null" disabled>for how long?</option>
+            <option *ngFor="let m of durationChoices" [ngValue]="m">
+              {{ m < 60 ? m + ' minutes' : (m / 60) + (m === 60 ? ' hour' : ' hours') }}
+            </option>
+          </select>
+          <span>every</span>
+          <input type="number" aria-label="Seconds between runs"
+                 [(ngModel)]="timedIntervalS" [min]="minIntervalS" [max]="maxIntervalS" step="1">
+          <span>s</span>
+          <button type="button" class="start" (click)="startTimed()" [disabled]="!timedMinutes">Start</button>
+        </div>
+      </ng-container>
+      <ng-template #firing>
+        <p class="status" role="status">
+          Firing every {{ timed.intervalS() }} s, {{ timed.runs() }} runs,
+          stops at {{ clockTime(timed.endsAt()) }} ({{ minutesSeconds(timed.remainingMs()) }} left)
+        </p>
+        <div class="timedrow">
+          <button type="button" class="stop" (click)="timed.stop()">Stop</button>
+          <button type="button" class="extend" (click)="timed.extend()">+15 min</button>
+        </div>
+      </ng-template>
+      <p class="error" *ngIf="timed.problem() as problem">{{ problem }}</p>
     </section>
 
     <section class="panel result" *ngIf="result() as run">

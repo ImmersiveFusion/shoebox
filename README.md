@@ -236,8 +236,8 @@ restated in every 429 alongside a `Retry-After`:
 
 | What | Limit |
 |---|---|
-| `POST /run` per shoebox | 20 in a row, then 2 a minute |
-| `POST /run` per source address | twice that, across every shoebox it mints |
+| `POST /run` per shoebox | 20 in a row, then 12 a minute |
+| `POST /run` per source address | 40 in a row, then 12 a minute, across every shoebox it mints |
 | `POST /shoebox` per source address | 5, then one every 5 minutes |
 | `POST /topology/parse` and `POST /share` per source address | 60 a minute |
 
@@ -250,16 +250,38 @@ its own, tighter budget that did not move when the run rate rose. The two guard
 different things: a run costs emission, a mint costs nothing and is only limited
 because it is the way around the run limit.
 
-These numbers are priced against emission, and were repriced once the cost of a run
-changed. A run used to be unbounded -- one was measured at 23,428 spans -- which made
-this table the only ceiling on what the shared backend received. A run is now capped,
-and typically emits twenty to forty spans, so an hour at the rate above is a worst case
-of roughly 60,000 spans: about half of what a single five-run burst could put in the
-backend in seconds under the old rules.
+These numbers are priced against emission. A run used to be unbounded (one was
+measured at 23,428 spans), which made this table the only ceiling on what the shared
+backend received. A run is now capped at 500 spans and typically emits twenty to forty.
+Twelve a minute is one run every five seconds, the fastest [timed firing](#timed-firing)
+goes, and the address layer holds the same twelve so extra shoeboxes buy a bigger burst
+and nothing more sustained. An hour flat out from one address is 760 runs: about 33,000
+spans at a typical run, and 380,000 if every run hit the cap. That ceiling is higher
+than it was at two a minute, and it is the price of letting the page fire on a timer.
 
 This is politeness enforcement, not abuse defence. A distributed slam is a job for the
 edge; this is what stops the ordinary way a public tool falls over, which is an agent
 in a loop.
+
+## Timed firing
+
+The play button fires one request. Under it, **Keep firing** fires the same request on
+a timer, from your browser, so a dashboard or a trace view has something arriving
+while you watch it:
+
+- Pick how long first: 5 minutes up to 2 hours. There is no open-ended choice, and two
+  hours is a hard ceiling.
+- Pick how often: every 5 seconds by default, anything from 5 to 60.
+- While it runs it says how often, how many runs so far, and when it stops. **Stop**
+  ends it, and **+15 min** adds time without ever leaving more than two hours to go.
+- Every run sends the diagram as it is at that moment, so an edit shows up on the next
+  run.
+- If a run is still out when the next one is due, that tick is skipped, not queued.
+- A 429 is shown as it is and firing carries on at the same pace. Nothing speeds up to
+  catch up.
+- It lives only in the open page. Leave the page and it stops; reload and it is off.
+  Nothing on the server knows it is happening; it is just the ordinary `POST /run`,
+  inside the [pacing](#pacing) above.
 
 ## Running it
 
