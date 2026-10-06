@@ -1,5 +1,5 @@
-import { Component, ElementRef, HostListener, OnInit, ViewChild, inject, signal } from '@angular/core';
-import { Subject, debounceTime } from 'rxjs';
+import { Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, inject, signal } from '@angular/core';
+import { Observable, Subject, debounceTime, tap } from 'rxjs';
 import { EXAMPLES, DEFAULT_EXAMPLE, GROUPS, Example, Outcome, outcomeOf } from './examples';
 import { OtlpStatus, ParsedTopology, RunResult, ShoeboxService } from './shoebox.service';
 import {
@@ -11,6 +11,15 @@ import {
 } from './diagram-url';
 import { decorate } from './diagram-style';
 import { flyRun, markUntaken } from './span-flight';
+import {
+  DEFAULT_INTERVAL_S,
+  DURATION_CHOICES_MIN,
+  MAX_INTERVAL_S,
+  MIN_INTERVAL_S,
+  TimedFiring,
+  clockTime,
+  minutesSeconds,
+} from './timed-firing';
 
 @Component({
   selector: 'app-shoebox',
@@ -18,7 +27,7 @@ import { flyRun, markUntaken } from './span-flight';
   styleUrls: ['./shoebox.component.scss'],
   standalone: false,
 })
-export class ShoeboxComponent implements OnInit {
+export class ShoeboxComponent implements OnInit, OnDestroy {
   private readonly service = inject(ShoeboxService);
   private readonly edits = new Subject<void>();
 
@@ -44,6 +53,20 @@ export class ShoeboxComponent implements OnInit {
 
   runIndex = 1;
   shoeboxId = '';
+
+  /**
+   * Timed firing: the same run call as the play button, on a timer, in this tab
+   * only. Nothing about it is saved, so a reload always comes back stopped.
+   */
+  readonly timed = new TimedFiring(() => this.runOnce());
+  readonly durationChoices = DURATION_CHOICES_MIN;
+  readonly minIntervalS = MIN_INTERVAL_S;
+  readonly maxIntervalS = MAX_INTERVAL_S;
+  /** Deliberately unset. There is no open-ended choice, so one has to be picked. */
+  timedMinutes: number | null = null;
+  timedIntervalS = DEFAULT_INTERVAL_S;
+  readonly clockTime = clockTime;
+  readonly minutesSeconds = minutesSeconds;
 
   /**
    * Which panel, if any, is filling the screen. Both panes are cramped by
@@ -141,7 +164,20 @@ export class ShoeboxComponent implements OnInit {
 
   /** Nothing moves until the user says so. This is the core mechanic. */
   fire(): void {
-    this.service.run(this.diagram, this.runIndex, this.shoeboxId).subscribe(result => {
+    this.runOnce().subscribe();
+  }
+
+  startTimed(): void {
+    this.timed.start(this.timedMinutes ? this.timedMinutes * 60_000 : null, this.timedIntervalS);
+  }
+
+  ngOnDestroy(): void {
+    this.timed.stop();
+  }
+
+  /** One run against the diagram as it is right now, shown when it comes back. */
+  private runOnce(): Observable<RunResult> {
+    return this.service.run(this.diagram, this.runIndex, this.shoeboxId).pipe(tap(result => {
       this.result.set(result);
       this.runIndex += 1;
 
@@ -155,7 +191,7 @@ export class ShoeboxComponent implements OnInit {
       // clears the previous run's marks. When it is not nothing, part of the
       // diagram did not run and the picture has to stop implying it did.
       markUntaken(this.renderTarget.nativeElement, result.notTaken ?? []);
-    });
+    }));
   }
 
   private stopFlight: (() => void) | null = null;

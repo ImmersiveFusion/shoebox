@@ -553,3 +553,42 @@ footer {
   p { max-width: none; }
   a { color: var(--teal); }
 }
+
+// Timed firing. Small on purpose: it is the play button on a timer, not a mode.
+.timed {
+  .timedrow {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    color: var(--muted);
+  }
+
+  select { width: auto; }
+
+  input[type="number"] {
+    width: 4.5rem;
+    background: var(--navy);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem;
+  }
+
+  .status { margin: 0 0 0.6rem; }
+
+  button.start, button.extend {
+    background: transparent;
+    color: var(--teal);
+    border: 1px solid rgba(47, 212, 196, 0.45);
+  }
+
+  button.start:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  button.stop {
+    background: var(--magenta);
+    color: #fff;
+  }
+
+  .error { margin: 0.6rem 0 0; }
+}
