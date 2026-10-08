@@ -137,7 +137,8 @@ Write one marker per node; a second one stays in the name and `notes` says so. T
 `/topology/parse` returns each node's pod names in that order as `instanceIds`.
 Within the first 256 positions two pods of one service never share a name: a
 taken suffix is redrawn, as Kubernetes does. That is also how many names
-`instanceIds` lists.
+`instanceIds` lists. A position above 256 (from `#300` or a large `xN`) is named
+the same way but not checked against the others, so it can, very rarely, repeat.
 
 For the overlap window of a rollout, draw both revisions as two nodes with the
 same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:

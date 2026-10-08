@@ -66,11 +66,13 @@ public static partial class MermaidParser
     [GeneratedRegex(@"^\s*class\s+(?<ids>[A-Za-z0-9_,\s-]+?)\s+broken\s*$", RegexOptions.Compiled)]
     private static partial Regex ClassBrokenLine();
 
-    // "Worker x5" -> replicas, "Worker #2" -> pinned instance
-    [GeneratedRegex(@"\s+x(?<n>\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    // "Worker x5" -> replicas, "Worker #2" -> pinned instance.
+    // [0-9], not \d: \d matches any Unicode digit ("x٣"), which int.Parse then
+    // rejects, and nine digits always fit an int.
+    [GeneratedRegex(@"\s+x(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex ReplicaSuffix();
 
-    [GeneratedRegex(@"\s+#(?<n>\d+)\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\s+#(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled)]
     private static partial Regex InstanceSuffix();
 
     /// <summary>
@@ -80,7 +82,7 @@ public static partial class MermaidParser
     /// contains it stays a name: "Orders Rev2" and "Abbrev2" are services, not
     /// revisions. Reading either as a marker would quietly rename the service.
     /// </summary>
-    [GeneratedRegex(@"\s+rev(?<n>\d{1,9})\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\s+rev(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled)]
     private static partial Regex RevisionSuffix();
 
     // subgraph HUBA["Hub network"] -- the id, so an edge drawn to the group can be named

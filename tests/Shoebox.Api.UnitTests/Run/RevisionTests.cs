@@ -125,6 +125,9 @@ flowchart LR
         [TestCase("Rev2")]
         [TestCase("Orders Rev2")]
         [TestCase("Abbrev2")]
+        [TestCase("Orders rev٣")]
+        [TestCase("Orders x٣")]
+        [TestCase("Orders #٣")]
         public void Labels_Without_The_Marker_Are_Revision_Zero(string label)
         {
             var api = Api(label);
@@ -237,11 +240,11 @@ flowchart LR
         [Test]
         public void A_Huge_Replica_Count_Costs_A_Bounded_Amount()
         {
-            // Naming is O(position); a pasted x2000000000 must not make a run or a parse unbounded.
-            var api = Api("Orders API x2000000000");
+            // Naming is O(position); a pasted x999999999 must not make a run or a parse unbounded.
+            var api = Api("Orders API x999999999");
 
             api.InstanceIds.Should().HaveCount(Pod.UniqueNamePositions);
-            PodName.IsMatch(api.InstanceId(1999999999)).Should().BeTrue();
+            PodName.IsMatch(api.InstanceId(999999998)).Should().BeTrue();
             PodName.IsMatch(Api("Orders API #0").InstanceIds.Single()).Should().BeTrue();
         }
 
