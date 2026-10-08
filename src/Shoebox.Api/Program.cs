@@ -275,6 +275,7 @@ app.MapPost("/topology/parse", (DiagramRequest request) =>
             replicas = p.Replicas,
             pinnedInstance = p.PinnedInstance,
             revision = p.Revision,
+            instanceIds = p.InstanceIds,
         }),
         calls = graph.Calls.Select(c => new
         {

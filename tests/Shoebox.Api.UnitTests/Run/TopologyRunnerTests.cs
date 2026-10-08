@@ -43,15 +43,15 @@ flowchart LR
             // and random selection breaks that promise quietly.
             for (var run = 1; run <= 5; run++)
             {
-                Fire(WorkerPermutation, run).ServedBy.Should().Contain($"worker-{run}");
+                Fire(WorkerPermutation, run).ServedBy.Should().Contain(Pod.InstanceIdOf("worker", run, null));
             }
         }
 
         [Test]
         public void The_Walk_Wraps_Around_Past_The_Replica_Count()
         {
-            Fire(WorkerPermutation, 6).ServedBy.Should().Contain("worker-1");
-            Fire(WorkerPermutation, 7).ServedBy.Should().Contain("worker-2");
+            Fire(WorkerPermutation, 6).ServedBy.Should().Contain(Pod.InstanceIdOf("worker", 1, null));
+            Fire(WorkerPermutation, 7).ServedBy.Should().Contain(Pod.InstanceIdOf("worker", 2, null));
         }
 
         [Test]
@@ -159,8 +159,8 @@ flowchart LR
 
             var result = Fire(diagram, 7);
 
-            result.ServedBy.Should().Contain("worker-1");
-            result.ServedBy.Should().Contain("worker-2");
+            result.ServedBy.Should().Contain(Pod.InstanceIdOf("worker", 1, null));
+            result.ServedBy.Should().Contain(Pod.InstanceIdOf("worker", 2, null));
         }
 
         [Test]
@@ -217,7 +217,7 @@ flowchart LR
             var result = Fire(WithPhantom, 1);
 
             result.Hops.Should().Contain(h => h.To == "q");
-            result.ServedBy.Should().Contain("orders-api-1");
+            result.ServedBy.Should().Contain(Pod.InstanceIdOf("orders-api", 1, null));
         }
 
         [Test]
@@ -246,7 +246,7 @@ flowchart LR
 
             // It runs as an ordinary call rather than silently doing nothing, and
             // the note explains that a phantom needs a queue to be a phantom.
-            result.ServedBy.Should().Contain("payment-service-1");
+            result.ServedBy.Should().Contain(Pod.InstanceIdOf("payment-service", 1, null));
             result.Notes.Should().Contain(n => n.Contains("queue"));
         }
 

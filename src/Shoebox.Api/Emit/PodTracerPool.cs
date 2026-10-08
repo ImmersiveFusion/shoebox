@@ -43,18 +43,12 @@ public sealed class PodTracerPool : IDisposable
         var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
         return _sources.GetOrAdd((serviceName, instanceId), key =>
         {
-            // Keyed on the service as well as the instance id, because with a
-            // revision the id alone is ambiguous: service "x" rev1 pod 2 and a
-            // service labelled "X R1" pod 2 are both x-r1-2.
-            //
-            // The source name is what each pod's provider subscribes to, so it has to
-            // be unique too, and it goes out as the instrumentation scope name, so it
-            // must not change for a diagram that has no revision. A pod without one
-            // keeps the bare instance id it always had; a pod with one is named
-            // {service}/{instanceId}, which a slug can never produce because a slug
-            // never contains '/'. The colliding pair above becomes x/x-r1-2 and x-r1-2.
-            var sourceName = revision is null ? key.InstanceId : $"{key.Service}/{key.InstanceId}";
-            var source = new ActivitySource(sourceName);
+            // The ActivitySource name is the instance id so each pod's provider can
+            // subscribe to exactly its own spans and nobody else's. A pod name ends in
+            // two fixed-length parts after the service, so two services can never
+            // produce the same one; the key carries the service anyway, so that a
+            // future change to the name format cannot quietly merge two pods.
+            var source = new ActivitySource(key.InstanceId);
             var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
             lock (_gate)
             {

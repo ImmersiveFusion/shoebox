@@ -209,7 +209,7 @@
           <td>{{ pod.label }}</td>
           <td><code>{{ pod.serviceName }}</code></td>
           <td>{{ pod.kind }}</td>
-          <td>{{ pod.pinnedInstance ? '#' + pod.pinnedInstance : pod.replicas }}</td>
+          <td [title]="pod.instanceIds?.join(' ') ?? ''">{{ pod.pinnedInstance ? '#' + pod.pinnedInstance : pod.replicas }}</td>
         </tr>
       </table>
       <p class="note" *ngFor="let note of parsed.notes">{{ note }}</p>

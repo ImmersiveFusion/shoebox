@@ -29,27 +29,67 @@ public sealed record Pod(
 
     /// <summary>
     /// Set when the label named a revision, as in "Orders API x3 rev2": a redeploy
-    /// that replaces every pod of the service. Null means no revision was drawn, and
-    /// instance ids keep the shape they have always had.
+    /// that replaces every pod of the service. Null means no marker, which names pods
+    /// exactly as revision 0 would.
     ///
-    /// Replica numbers are stable on purpose: scale x2 to x4 and back and the first
-    /// two instances keep their ids, as pods that survived a scale-out would. A
-    /// redeploy is the opposite case, where every pod of the service is replaced,
-    /// and that needs ids that cannot be confused with the old ones. Bumping the
+    /// Pod names are stable on purpose: scale x2 to x4 and back and the first two
+    /// pods keep their names, as pods that survived a scale-out would. A redeploy is
+    /// the opposite case, where every pod of the service is replaced, and bumping the
     /// revision is how a diagram says so.
     /// </summary>
     public int? Revision { get; init; }
 
-    /// <summary>The service.instance.id of one replica of this pod.</summary>
+    /// <summary>The service.instance.id of the pod at one position, 1-based.</summary>
     public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Revision);
 
+    /// <summary>Every pod name this node can serve from, in position order.</summary>
+    public IReadOnlyList<string> InstanceIds =>
+        PinnedInstance is { } pinned
+            ? new[] { InstanceId(pinned) }
+            : Enumerable.Range(1, Math.Max(1, Replicas)).Select(InstanceId).ToArray();
+
     /// <summary>
-    /// <c>{service}-{n}</c> with no revision, <c>{service}-r{revision}-{n}</c> with one.
-    /// The unrevisioned form is unchanged so every diagram and link written before
-    /// revisions existed replays exactly as it did.
+    /// A Deployment's pod name: <c>{service}-{templateHash}-{suffix}</c>, as in
+    /// <c>orders-api-7d9f8b6c4x-x2k9p</c>.
+    ///
+    /// A backend that groups pods into services is tested against names that look
+    /// like the ones it will meet, and those are never <c>orders-api-1</c>. The
+    /// template hash is the same for every pod of one service at one revision and
+    /// changes with the revision, the way a ReplicaSet's does when its pod template
+    /// changes; the suffix is per pod. Both are SHA-256 based rather than
+    /// <c>GetHashCode</c>, which differs between processes, so a shared link names
+    /// the same pods everywhere. The position <c>n</c> chooses the pod and is not
+    /// part of its name, so <c>#2</c> and <c>broken on #3</c> mean what they did.
     /// </summary>
-    public static string InstanceIdOf(string serviceName, int instance, int? revision) =>
-        revision is { } r ? $"{serviceName}-r{r}-{instance}" : $"{serviceName}-{instance}";
+    public static string InstanceIdOf(string serviceName, int instance, int? revision)
+    {
+        var rev = revision ?? 0;
+        var suffix = SafeEncode($"{serviceName}|{rev}|{instance}", SuffixLength);
+        return $"{serviceName}-{TemplateHash(serviceName, rev)}-{suffix}";
+    }
+
+    /// <summary>The ReplicaSet part of every pod name for one service at one revision.</summary>
+    public static string TemplateHash(string serviceName, int revision) =>
+        SafeEncode($"{serviceName}|{revision}", TemplateHashLength);
+
+    public const int TemplateHashLength = 10;
+
+    public const int SuffixLength = 5;
+
+    /// <summary>
+    /// The alphabet Kubernetes uses for generated names (rand.SafeEncodeString in
+    /// k8s.io/apimachinery): no vowels, so no words, and no 0, 1 or 3, so nothing
+    /// that reads as a letter.
+    /// </summary>
+    public const string SafeAlphabet = "bcdfghjklmnpqrstvwxz2456789";
+
+    private static string SafeEncode(string input, int length)
+    {
+        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        var chars = new char[length];
+        for (var i = 0; i < length; i++) chars[i] = SafeAlphabet[digest[i] % SafeAlphabet.Length];
+        return new string(chars);
+    }
 
     /// <summary>Default latency by shape. Overridable per edge later.</summary>
     public int DefaultLatencyMs => Kind switch

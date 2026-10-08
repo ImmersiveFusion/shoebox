@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using NUnit.Framework;
 using Shoebox.Api.Emit;
@@ -7,13 +8,17 @@ using Shoebox.Api.Topology;
 namespace Shoebox.Api.UnitTests.Run
 {
     /// <summary>
-    /// A rev marker is how a diagram says "every pod of this service was
-    /// replaced". Scaling keeps replica ids; a redeploy must change all of them, and a
-    /// rollout has a window where the old and the new set both emit.
+    /// Pods are named the way a Deployment names them, {service}-{templateHash}-{suffix},
+    /// and a rev marker is how a diagram says "every pod of this service was replaced".
+    /// Scaling keeps pod names; a redeploy changes all of them, and a rollout has a
+    /// window where the old and the new set both emit.
     /// </summary>
     [TestFixture]
     public class RevisionTests
     {
+        private static readonly Regex PodName =
+            new("^(?<service>[a-z0-9-]+)-(?<hash>[bcdfghjklmnpqrstvwxz2456789]{10})-(?<suffix>[bcdfghjklmnpqrstvwxz2456789]{5})$");
+
         private PodTracerPool _pool = null!;
         private TopologyRunner _runner = null!;
 
@@ -35,12 +40,69 @@ flowchart LR
   gw[Gateway] --> api[{label}]
   api --> db[(Postgres)]";
 
+        private static Pod Api(string label) => MermaidParser.Parse(Orders(label)).ById("api")!;
+
+        private static string Hash(string podName) => PodName.Match(podName).Groups["hash"].Value;
+
+        [TestCase("Orders API")]
+        [TestCase("Orders API x3")]
+        [TestCase("Orders API x3 rev2")]
+        [TestCase("Orders API #2 rev7")]
+        public void Every_Pod_Name_Looks_Like_A_Deployment_Pod(string label)
+        {
+            var api = Api(label);
+
+            foreach (var name in api.InstanceIds)
+            {
+                var match = PodName.Match(name);
+                match.Success.Should().BeTrue($"{name} should be service-hash10-suffix5");
+                match.Groups["service"].Value.Should().Be("orders-api");
+            }
+        }
+
+        [Test]
+        public void The_Alphabet_Is_The_Kubernetes_Safe_Alphabet()
+        {
+            Pod.SafeAlphabet.Should().Be("bcdfghjklmnpqrstvwxz2456789");
+
+            var generated = string.Concat(Enumerable.Range(1, 200)
+                .Select(n => Pod.InstanceIdOf("svc", n, n % 4))
+                .Select(id => id["svc-".Length..].Replace("-", string.Empty)));
+            generated.ToCharArray().Should().OnlyContain(c => Pod.SafeAlphabet.Contains(c));
+        }
+
+        [Test]
+        public void Names_Are_Deterministic()
+        {
+            // A shared link has to name the same pods on any machine, so no GetHashCode.
+            Pod.InstanceIdOf("orders-api", 1, 2).Should().Be(Pod.InstanceIdOf("orders-api", 1, 2));
+
+            const string diagram = @"
+flowchart LR
+  gw[Gateway] --> old[Orders API x2 rev1]
+  gw --> new[Orders API x3 rev2]";
+
+            for (var run = 1; run <= 6; run++)
+            {
+                Fire(diagram, run).ServedBy.Should().Equal(Fire(diagram, run).ServedBy);
+            }
+        }
+
+        [Test]
+        public void Pods_Of_One_Service_At_One_Revision_Share_A_Template_Hash_And_Differ_By_Suffix()
+        {
+            var names = Api("Orders API x5 rev2").InstanceIds;
+
+            names.Select(Hash).Distinct().Should().ContainSingle();
+            names.Should().OnlyHaveUniqueItems();
+        }
+
         [TestCase("Orders API x3 rev2", 3)]
         [TestCase("Orders API rev2 x3", 3)]
         [TestCase("Orders API rev2", 1)]
         public void The_Revision_Suffix_Is_Configuration_Not_Name(string label, int replicas)
         {
-            var api = MermaidParser.Parse(Orders(label)).ById("api")!;
+            var api = Api(label);
 
             api.Revision.Should().Be(2);
             api.Replicas.Should().Be(replicas);
@@ -49,13 +111,12 @@ flowchart LR
         }
 
         [Test]
-        public void A_Revision_Combines_With_A_Pinned_Instance()
+        public void A_Pinned_Instance_Is_A_Position_Not_Part_Of_The_Name()
         {
-            var api = MermaidParser.Parse(Orders("Orders API #2 rev3")).ById("api")!;
+            var api = Api("Orders API #2 rev3");
 
             api.PinnedInstance.Should().Be(2);
-            api.Revision.Should().Be(3);
-            api.InstanceId(2).Should().Be("orders-api-r3-2");
+            api.InstanceIds.Should().Equal(Pod.InstanceIdOf("orders-api", 2, 3));
         }
 
         [TestCase("Orders API")]
@@ -64,42 +125,45 @@ flowchart LR
         [TestCase("Rev2")]
         [TestCase("Orders Rev2")]
         [TestCase("Abbrev2")]
-        public void Labels_Without_The_Marker_Keep_Their_Name_And_Ids(string label)
+        public void Labels_Without_The_Marker_Are_Revision_Zero(string label)
         {
-            var api = MermaidParser.Parse(Orders(label)).ById("api")!;
+            var api = Api(label);
 
             api.Revision.Should().BeNull();
-            api.InstanceId(1).Should().Be($"{api.ServiceName}-1");
+            api.InstanceId(1).Should().Be(Pod.InstanceIdOf(api.ServiceName, 1, 0));
         }
 
         [Test]
-        public void Without_A_Revision_Instance_Ids_Are_Unchanged()
+        public void Scaling_Up_Keeps_The_Existing_Names_And_Adds_New_Ones()
         {
-            // Backward compatible: every link written before revisions replays as it did.
-            for (var run = 1; run <= 3; run++)
-            {
-                Fire(Orders("Orders API x3"), run).ServedBy.Should().Contain($"orders-api-{run}");
-            }
+            var three = Api("Orders API x3 rev1").InstanceIds;
+            var five = Api("Orders API x5 rev1").InstanceIds;
+
+            five.Take(3).Should().Equal(three);
+            five.Skip(3).Should().NotIntersectWith(three);
         }
 
         [Test]
-        public void Bumping_The_Revision_Replaces_Every_Instance_Id()
+        public void Bumping_The_Revision_Changes_Every_Name_And_The_Template_Hash()
         {
-            var rev1 = Enumerable.Range(1, 3).SelectMany(r => Fire(Orders("Orders API x3 rev1"), r).ServedBy)
-                .Where(s => s.StartsWith("orders-api", StringComparison.Ordinal)).ToHashSet();
-            var rev2 = Enumerable.Range(1, 3).SelectMany(r => Fire(Orders("Orders API x3 rev2"), r).ServedBy)
-                .Where(s => s.StartsWith("orders-api", StringComparison.Ordinal)).ToHashSet();
+            var rev1 = Api("Orders API x3 rev1").InstanceIds;
+            var rev2 = Api("Orders API x3 rev2").InstanceIds;
 
-            rev1.Should().BeEquivalentTo(new[] { "orders-api-r1-1", "orders-api-r1-2", "orders-api-r1-3" });
-            rev2.Should().BeEquivalentTo(new[] { "orders-api-r2-1", "orders-api-r2-2", "orders-api-r2-3" });
             rev1.Should().NotIntersectWith(rev2, "a redeploy replaces every pod");
+            Hash(rev1[0]).Should().NotBe(Hash(rev2[0]));
+
+            Enumerable.Range(1, 3).SelectMany(r => Fire(Orders("Orders API x3 rev2"), r).ServedBy)
+                .Should().Contain(rev2);
         }
 
         [Test]
-        public void Scaling_Within_A_Revision_Keeps_The_Surviving_Ids()
+        public void Bumping_One_Service_Leaves_Every_Other_Service_Alone()
         {
-            Fire(Orders("Orders API x2 rev1"), 2).ServedBy.Should().Contain("orders-api-r1-2");
-            Fire(Orders("Orders API x4 rev1"), 2).ServedBy.Should().Contain("orders-api-r1-2");
+            var before = MermaidParser.Parse("flowchart LR\n  gw[Gateway x2] --> api[Orders API x3 rev1]");
+            var after = MermaidParser.Parse("flowchart LR\n  gw[Gateway x2] --> api[Orders API x3 rev2]");
+
+            after.ById("gw")!.InstanceIds.Should().Equal(before.ById("gw")!.InstanceIds);
+            after.ById("api")!.InstanceIds.Should().NotIntersectWith(before.ById("api")!.InstanceIds);
         }
 
         [Test]
@@ -114,68 +178,46 @@ flowchart LR
   new --> db";
 
             var graph = MermaidParser.Parse(overlap);
-            graph.ById("old")!.ServiceName.Should().Be(graph.ById("new")!.ServiceName);
+            var old = graph.ById("old")!;
+            var @new = graph.ById("new")!;
+            old.ServiceName.Should().Be(@new.ServiceName);
+            Hash(old.InstanceId(1)).Should().NotBe(Hash(@new.InstanceId(1)));
 
-            var served = Fire(overlap, 1).ServedBy;
-            served.Should().Contain("orders-api-r1-1").And.Contain("orders-api-r2-1");
+            Fire(overlap, 1).ServedBy.Should().Contain(old.InstanceId(1)).And.Contain(@new.InstanceId(1));
         }
 
         [Test]
-        public void The_Same_Diagram_And_Run_Replay_Identically()
-        {
-            const string diagram = @"
-flowchart LR
-  gw[Gateway] --> old[Orders API x2 rev1]
-  gw --> new[Orders API x3 rev2]";
-
-            for (var run = 1; run <= 6; run++)
-            {
-                Fire(diagram, run).ServedBy.Should().Equal(Fire(diagram, run).ServedBy);
-            }
-        }
-
-        [Test]
-        public void The_Span_Resource_Carries_The_Revisioned_Instance_Id()
+        public void The_Scope_Name_Is_The_Pod_Name()
         {
             using var activity = _pool.For("orders-api", 1, revision: 2).StartActivity("orders-api handle");
 
             activity.Should().NotBeNull();
-            activity!.Source.Name.Should().Be("orders-api/orders-api-r2-1");
+            activity!.Source.Name.Should().Be(Pod.InstanceIdOf("orders-api", 1, 2));
+            _pool.For("orders-api", 1).Name.Should().Be(Pod.InstanceIdOf("orders-api", 1, 0));
         }
 
         [Test]
-        public void A_Pod_Without_A_Revision_Keeps_Its_Old_Scope_Name()
+        public void Similar_Service_Names_Get_Separate_Pods()
         {
-            // The source name is the OTLP instrumentation scope name, so existing
-            // diagrams must export exactly what they did before revisions existed.
-            _pool.For("orders-api", 1).Name.Should().Be("orders-api-1");
-        }
-
-        [Test]
-        public void Two_Services_That_Share_An_Instance_Id_Get_Separate_Pods()
-        {
-            // Service "x" rev1 pod 2 and a service labelled "X R1" pod 2 are both x-r1-2.
-            var x = MermaidParser.Parse(@"
-flowchart LR
-  a[X rev1] --> b[X R1]");
-            x.ById("a")!.InstanceId(2).Should().Be(x.ById("b")!.InstanceId(2));
-
+            // "x" and "x-r1" were the colliding pair under the old format; any two
+            // services must stay two pods however their names line up.
             var first = _pool.For("x", 2, revision: 1);
             var second = _pool.For("x-r1", 2);
 
-            second.Should().NotBeSameAs(first, "each pod exports under its own service.name");
-            first.Name.Should().Be("x/x-r1-2");
-            second.Name.Should().Be("x-r1-2", "a pod with no revision keeps its old name");
+            second.Should().NotBeSameAs(first);
+            second.Name.Should().NotBe(first.Name);
+            first.Name.Should().StartWith("x-");
+            second.Name.Should().StartWith("x-r1-");
         }
 
-        [TestCase("Orders API rev0", 0, "orders-api-r0-1")]
-        [TestCase("Orders API rev02", 2, "orders-api-r2-1")]
-        public void Rev0_Is_Allowed_And_Leading_Zeros_Normalize(string label, int revision, string id)
+        [TestCase("Orders API rev0", 0)]
+        [TestCase("Orders API rev02", 2)]
+        public void Rev0_Is_Allowed_And_Leading_Zeros_Normalize(string label, int revision)
         {
-            var api = MermaidParser.Parse(Orders(label)).ById("api")!;
+            var api = Api(label);
 
             api.Revision.Should().Be(revision);
-            api.InstanceId(1).Should().Be(id);
+            api.InstanceId(1).Should().Be(Pod.InstanceIdOf("orders-api", 1, revision));
         }
 
         [TestCase("Orders rev1 rev2")]
@@ -195,6 +237,16 @@ flowchart LR
         public void One_Marker_Leaves_No_Note()
         {
             MermaidParser.Parse(Orders("Orders API x3 rev2")).Notes.Should().BeEmpty();
+        }
+
+        [Test]
+        public void The_Names_Are_Pinned_So_Old_Links_Keep_Naming_The_Same_Pods()
+        {
+            // The documented example. If this changes, every shared link names new pods.
+            Api("Orders API x3 rev2").InstanceIds.Should().Equal(
+                "orders-api-9fgkfp96z4-bh4ks",
+                "orders-api-9fgkfp96z4-kkkwx",
+                "orders-api-9fgkfp96z4-mmf6q");
         }
     }
 }

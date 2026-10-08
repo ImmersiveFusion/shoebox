@@ -66,7 +66,7 @@ conventions, so there is nothing new to learn.
 | `ext{{Stripe}}` | a third party |
 | `worker[Worker x5]` | five replicas, load balanced |
 | `worker[Worker #2]` | one named instance |
-| `worker[Worker x5 rev2]` | a rollout that replaces every pod: ids become `worker-r2-{n}` |
+| `worker[Worker x5 rev2]` | a rollout that replaces every pod: new template hash, new pod names |
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
@@ -101,17 +101,26 @@ three replicas — and not three nodes. Three nodes means something different an
 trace will show it.
 
 **A revision is a redeploy; scaling is not.**
-Replica ids are stable: `x2` to `x4` and back keeps `worker-1` and
-`worker-2`, as pods that survived a scale-out would. A revision is the other case,
-a rollout that replaces every pod of the service. Add `rev<N>` to the label and
-every instance id becomes `{service}-r<N>-{n}`, so bumping the number replaces
-every pod at once while `service.name` stays the same. The marker is lowercase
-`rev` and a number, after or before the replica count (`x3 rev2` or `rev2 x3`);
-`rev0` is allowed and leading zeros normalize (`rev02` is `rev2`). A node with no
-marker keeps exactly the ids it always had, with one exception: a label that
-already ended in ` rev<digits>`, such as `a[Payments rev2]`, is now read as a
-marker, so its `service.name` loses that word. Write one marker per node; a second
-one stays in the name and `notes` says so.
+Pods are named the way a Kubernetes Deployment names them,
+`{service}-{templateHash}-{suffix}`, for example `orders-api-9fgkfp96z4-bh4ks`.
+The template hash is 10 characters and the suffix 5, both from the alphabet
+Kubernetes uses for generated names, and both derived from SHA-256, so the same
+diagram and run index name the same pods on every machine. This replaced the old
+`{service}-{n}` ids, so a backend that saw a diagram before the change sees new
+pod names for it now.
+
+Names are stable within a revision: `x3` to `x5` keeps the first three pods' names
+and adds two, and going back drops those two again, as a scale-out and scale-in
+would. A revision is the other case, a rollout that replaces every pod of the
+service. Add `rev<N>` to the label and the template hash changes, so every pod gets
+a new name while `service.name` stays the same; other services keep theirs. A node
+with no marker is revision 0. The marker is lowercase `rev` and a number, after or
+before the replica count (`x3 rev2` or `rev2 x3`); leading zeros normalize (`rev02`
+is `rev2`). A label that already ended in ` rev<digits>`, such as
+`a[Payments rev2]`, is read as a marker, so its `service.name` loses that word.
+Write one marker per node; a second one stays in the name and `notes` says so. The
+`N` in `xN`, `#N` and `broken on #N` is still a position, not part of any name:
+`/topology/parse` returns each node's pod names in that order as `instanceIds`.
 
 For the overlap window of a rollout, draw both revisions as two nodes with the
 same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:
@@ -122,15 +131,14 @@ flowchart LR
   gw --> new[Orders API x2 rev2]
 ```
 
-Each request reaches both, so the old and new instances emit in the same window
+Each request reaches both, so pods from two template hashes emit in the same window
 under one `orders-api`. That is mirrored traffic rather than a load balancer's
 split, because a run is exactly one request; what it shows honestly is the thing a
-backend has to get right, two instance sets of one service live at once. To test
-that a tool keeps one node per service through all of it, fire the same diagram
-edited in steps: `api[Orders API x2 rev1]`, then `x4 rev1`, then `x2 rev1` (scaling,
-ids kept), then the two-node overlap above, then `api[Orders API x2 rev2]` alone
-(every old instance gone). Start at `rev1` rather than no marker if you want the
-scaling steps and the redeploy to share an id scheme.
+backend has to get right, two pod sets of one service live at once. To test that a
+tool keeps one node per service through all of it, fire the same diagram edited in
+steps: `api[Orders API x2 rev1]`, then `x4 rev1`, then `x2 rev1` (scaling, names
+kept), then the two-node overlap above, then `api[Orders API x2 rev2]` alone (every
+old pod gone).
 
 **A cycle is fine, and it does not mean what you might fear.** A pub/sub topic drawn
 with arrows going both ways — `accounting --> topic` *and* `topic --> accounting` —
@@ -229,7 +237,7 @@ POST /topology/parse
 
 → {"pods":[{"id":"api","label":"Orders API","serviceName":"orders-api",
             "kind":"service","replicas":1,"pinnedInstance":null,
-            "revision":null}, …],
+            "revision":null,"instanceIds":["orders-api-zd6rv46kn9-kw2xk"]}, …],
    "calls":[{"from":"api","to":"db","broken":false,"brokenInstances":[],"reason":null}],
    "entry":"api",
    "notes":[]}
@@ -259,7 +267,7 @@ every time. A missing or non-positive `runIndex` is treated as 1.
 ```
 {"runIndex":1,
  "traceId":"dd32ec7f00c7f795e4dedf9483ccc6a4",
- "servedBy":["gateway-1","order-service-1", …],
+ "servedBy":["gateway-g9v5z56zwn-d92zl","order-service-sgxxw65zhj-k6kb2", …],
  "spanCount":17,
  "failedSpanCount":1,
  "notes":[],
