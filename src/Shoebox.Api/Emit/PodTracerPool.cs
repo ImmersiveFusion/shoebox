@@ -22,7 +22,7 @@ namespace Shoebox.Api.Emit;
 /// </summary>
 public sealed class PodTracerPool : IDisposable
 {
-    private readonly ConcurrentDictionary<string, ActivitySource> _sources = new();
+    private readonly ConcurrentDictionary<(string Service, string InstanceId), ActivitySource> _sources = new();
     private readonly List<TracerProvider> _providers = new();
     private readonly object _gate = new();
     private readonly string _hostName = Environment.MachineName;
@@ -41,12 +41,15 @@ public sealed class PodTracerPool : IDisposable
     public ActivitySource For(string serviceName, int instance, int? generation = null)
     {
         var instanceId = Pod.InstanceIdOf(serviceName, instance, generation);
-        return _sources.GetOrAdd(instanceId, id =>
+        return _sources.GetOrAdd((serviceName, instanceId), key =>
         {
-            // The ActivitySource name is the instance id so each pod's provider can
-            // subscribe to exactly its own spans and nobody else's.
-            var source = new ActivitySource(id);
-            var provider = BuildProvider(serviceName, id);
+            // Keyed on the service as well as the instance id, because with a
+            // generation the id alone is ambiguous: service "x" gen1 pod 2 and a
+            // service labelled "X G1" pod 2 are both x-g1-2. The source name carries
+            // both for the same reason, so each pod's provider subscribes to exactly
+            // its own spans and nobody else's. A slug never contains '/'.
+            var source = new ActivitySource($"{key.Service}/{key.InstanceId}");
+            var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
             lock (_gate)
             {
                 _providers.Add(provider);
@@ -56,7 +59,7 @@ public sealed class PodTracerPool : IDisposable
         });
     }
 
-    private TracerProvider BuildProvider(string serviceName, string instanceId)
+    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName)
     {
         var resource = ResourceBuilder.CreateDefault()
             .AddService(serviceName)
@@ -69,7 +72,7 @@ public sealed class PodTracerPool : IDisposable
         var builder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resource)
             .SetSampler(new DeclaredFullSampler())
-            .AddSource(instanceId);
+            .AddSource(sourceName);
 
         // Vendor neutral by construction. Endpoint and headers are the standard OTLP
         // ones, resolved from configuration the way Snowglobe resolves its flags, so

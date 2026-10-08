@@ -9,6 +9,7 @@ export interface ParsedPod {
   kind: string;
   replicas: number;
   pinnedInstance: number | null;
+  generation: number | null;
 }
 
 export interface ParsedCall {

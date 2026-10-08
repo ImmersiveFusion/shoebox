@@ -114,12 +114,17 @@ your diagram on screen under the same name.
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
 
-**A generation is a redeploy.** Replica ids are stable: `x2` to `x4` and back keeps
-`worker-1` and `worker-2`, as pods that survived a scale-out would. Add `gen<N>` to
-the label and every instance id becomes `{service}-g<N>-{n}`, so bumping the number
-replaces every pod of the service at once while `service.name` stays the same. With
-no marker the ids are exactly what they always were. The marker is lowercase `gen`
-and a number, after or before the replica count (`x3 gen2` or `gen2 x3`).
+**A generation is a redeploy.**
+Replica ids are stable: `x2` to `x4` and back keeps `worker-1` and
+`worker-2`, as pods that survived a scale-out would. Add `gen<N>` to the label and
+every instance id becomes `{service}-g<N>-{n}`, so bumping the number replaces
+every pod of the service at once while `service.name` stays the same. The marker is
+lowercase `gen` and a number, after or before the replica count (`x3 gen2` or
+`gen2 x3`); `gen0` is allowed and leading zeros normalize (`gen02` is `gen2`). A
+node with no marker keeps exactly the ids it always had, with one exception: a label
+that already ended in ` gen<digits>`, such as `a[Payments gen2]`, is now read as a
+marker, so its `service.name` loses that word. Write one marker per node; a second
+one stays in the name and `notes` says so.
 
 For the overlap window of a rollout, draw both generations as two nodes with the
 same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:

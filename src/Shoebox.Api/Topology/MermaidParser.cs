@@ -264,7 +264,7 @@ public static partial class MermaidParser
             var node = NodeLine().Match(line);
             if (node.Success)
             {
-                Upsert(pods, order, node.Groups["id"].Value, node.Groups["shape"].Value);
+                Upsert(pods, order, notes, node.Groups["id"].Value, node.Groups["shape"].Value);
                 continue;
             }
 
@@ -357,7 +357,7 @@ public static partial class MermaidParser
 
         foreach (var token in tokens)
         {
-            Upsert(pods, order, token.Groups["id"].Value, token.Groups["shape"].Value);
+            Upsert(pods, order, notes, token.Groups["id"].Value, token.Groups["shape"].Value);
         }
 
         for (var i = 0; i < links.Count; i++)
@@ -435,7 +435,7 @@ public static partial class MermaidParser
         };
     }
 
-    private static void Upsert(Dictionary<string, Pod> pods, List<string> order, string id, string? shape)
+    private static void Upsert(Dictionary<string, Pod> pods, List<string> order, List<string> notes, string id, string? shape)
     {
         var hasShape = !string.IsNullOrEmpty(shape);
         if (pods.ContainsKey(id) && !hasShape) return;
@@ -464,6 +464,14 @@ public static partial class MermaidParser
         }
 
         generation ??= TakeGeneration(ref label);
+
+        // Two markers on one label: the outer one wins and the other stays in the
+        // name, which changes service.name. Kept as written and said out loud,
+        // because a renamed service is easy to miss in a backend.
+        if (generation is not null && GenerationSuffix().IsMatch(label))
+        {
+            notes.Add($"{id} has more than one gen marker: gen{generation} was used and the rest stayed in the name, so service.name is {Slug(label)}. Write one gen marker per node.");
+        }
 
         var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned, Generation = generation };
         if (!pods.ContainsKey(id)) order.Add(id);

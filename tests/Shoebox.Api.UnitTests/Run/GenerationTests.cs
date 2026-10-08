@@ -139,8 +139,53 @@ flowchart LR
             using var activity = _pool.For("orders-api", 1, generation: 2).StartActivity("orders-api handle");
 
             activity.Should().NotBeNull();
-            activity!.Source.Name.Should().Be("orders-api-g2-1");
-            _pool.For("orders-api", 1).Name.Should().Be("orders-api-1");
+            activity!.Source.Name.Should().Be("orders-api/orders-api-g2-1");
+            _pool.For("orders-api", 1).Name.Should().Be("orders-api/orders-api-1");
+        }
+
+        [Test]
+        public void Two_Services_That_Share_An_Instance_Id_Get_Separate_Pods()
+        {
+            // Service "x" gen1 pod 2 and a service labelled "X G1" pod 2 are both x-g1-2.
+            var x = MermaidParser.Parse(@"
+flowchart LR
+  a[X gen1] --> b[X G1]");
+            x.ById("a")!.InstanceId(2).Should().Be(x.ById("b")!.InstanceId(2));
+
+            var first = _pool.For("x", 2, generation: 1);
+            var second = _pool.For("x-g1", 2);
+
+            second.Should().NotBeSameAs(first, "each pod exports under its own service.name");
+            second.Name.Should().NotBe(first.Name, "a provider subscribes by source name");
+        }
+
+        [TestCase("Orders API gen0", 0, "orders-api-g0-1")]
+        [TestCase("Orders API gen02", 2, "orders-api-g2-1")]
+        public void Gen0_Is_Allowed_And_Leading_Zeros_Normalize(string label, int generation, string id)
+        {
+            var api = MermaidParser.Parse(Orders(label)).ById("api")!;
+
+            api.Generation.Should().Be(generation);
+            api.InstanceId(1).Should().Be(id);
+        }
+
+        [TestCase("Orders gen1 gen2")]
+        [TestCase("Orders gen1 x3 gen2")]
+        [TestCase("Orders gen1 gen2 x3")]
+        public void A_Second_Marker_Stays_In_The_Name_And_Says_So(string label)
+        {
+            var graph = MermaidParser.Parse(Orders(label));
+            var api = graph.ById("api")!;
+
+            api.Generation.Should().Be(2);
+            api.ServiceName.Should().Be("orders-gen1");
+            graph.Notes.Should().ContainSingle(n => n.Contains("more than one gen marker", StringComparison.Ordinal));
+        }
+
+        [Test]
+        public void One_Marker_Leaves_No_Note()
+        {
+            MermaidParser.Parse(Orders("Orders API x3 gen2")).Notes.Should().BeEmpty();
         }
     }
 }
