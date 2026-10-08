@@ -82,6 +82,7 @@
             <tr><td><code>{{ hexagonExample }}</code></td><td>a third party</td></tr>
             <tr><td><code>[Worker x5]</code></td><td>five replicas, load balanced</td></tr>
             <tr><td><code>[Worker #2]</code></td><td>one named instance</td></tr>
+            <tr><td><code>[Worker x5 rev2]</code></td><td>a rollout that replaces every pod</td></tr>
             <tr><td><code>--&gt;|broken|</code></td><td>this call always fails</td></tr>
             <tr><td><code>--&gt;|broken: wrong table|</code></td><td>and this is why</td></tr>
             <tr><td><code>--&gt;|broken on #3|</code></td><td>only instance 3 fails</td></tr>
@@ -208,7 +209,7 @@
           <td>{{ pod.label }}</td>
           <td><code>{{ pod.serviceName }}</code></td>
           <td>{{ pod.kind }}</td>
-          <td>{{ pod.pinnedInstance ? '#' + pod.pinnedInstance : pod.replicas }}</td>
+          <td [title]="pod.instanceIds?.join(' ') ?? ''">{{ pod.pinnedInstance ? '#' + pod.pinnedInstance : pod.replicas }}</td>
         </tr>
       </table>
       <p class="note" *ngFor="let note of parsed.notes">{{ note }}</p>

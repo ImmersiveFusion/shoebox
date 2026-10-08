@@ -49,6 +49,7 @@ semantic conventions, so nothing new has to be learned.
 | `ext{{Stripe}}` | a third party |
 | `worker[Worker x5]` | five replicas, load balanced |
 | `worker[Worker #2]` | one named instance |
+| `worker[Worker x5 rev2]` | a rollout that replaces every pod: new template hash, new pod names |
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
@@ -112,6 +113,50 @@ your diagram on screen under the same name.
 
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
+
+**A revision is a redeploy.**
+Pods are named the way a Kubernetes Deployment names them,
+`{service}-{templateHash}-{suffix}`, for example `orders-api-9fgkfp96z4-bh4ks`.
+The template hash is 10 characters and the suffix 5, both from the alphabet
+Kubernetes uses for generated names, and both derived from SHA-256, so the same
+diagram and run index name the same pods on every machine. This replaced the old
+`{service}-{n}` ids, so a backend that saw a diagram before the change sees new
+pod names for it now.
+
+Names are stable within a revision: `x3` to `x5` keeps the first three pods' names
+and adds two, and going back drops those two again, as a scale-out and scale-in
+would. A revision is the other case, a rollout that replaces every pod of the
+service. Add `rev<N>` to the label and the template hash changes, so every pod gets
+a new name while `service.name` stays the same; other services keep theirs. A node
+with no marker is revision 0. The marker is lowercase `rev` and a number, after or
+before the replica count (`x3 rev2` or `rev2 x3`); leading zeros normalize (`rev02`
+is `rev2`). A label that already ended in ` rev<digits>`, such as
+`a[Payments rev2]`, is read as a marker, so its `service.name` loses that word.
+Write one marker per node; a second one stays in the name and `notes` says so. The
+`N` in `xN`, `#N` and `broken on #N` is still a position, not part of any name:
+`/topology/parse` returns each node's pod names in that order as `instanceIds`.
+Within the first 256 positions two pods of one service never share a name: a
+taken suffix is redrawn, as Kubernetes does. That is also how many names
+`instanceIds` lists. A position above 256 (from `#300` or a large `xN`) is named
+the same way but not checked against the others, so it can, very rarely, repeat.
+
+For the overlap window of a rollout, draw both revisions as two nodes with the
+same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:
+
+```mermaid
+flowchart LR
+  gw[Gateway] --> old[Orders API x2 rev1]
+  gw --> new[Orders API x2 rev2]
+```
+
+Each request reaches both, so pods from two template hashes emit in the same window
+under one `orders-api`. That is mirrored traffic rather than a load balancer's
+split, because a run is exactly one request; what it shows honestly is the thing a
+backend has to get right, two pod sets of one service live at once. To test that a
+tool keeps one node per service through all of it, fire the same diagram edited in
+steps: `api[Orders API x2 rev1]`, then `x4 rev1`, then `x2 rev1` (scaling, names
+kept), then the two-node overlap above, then `api[Orders API x2 rev2]` alone (every
+old pod gone).
 
 **A cycle is an architecture, not a mistake.** Draw a pub/sub topic with arrows
 going both ways — `accounting --> topic` and `topic --> accounting` — and a request

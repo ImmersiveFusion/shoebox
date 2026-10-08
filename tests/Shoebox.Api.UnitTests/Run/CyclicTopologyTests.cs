@@ -194,7 +194,7 @@ flowchart TD
 
             result.TraceId.Should().NotBeNullOrEmpty();
             result.ServedBy.Should().NotBeEmpty();
-            result.ServedBy[0].Should().Be("user-1");
+            result.ServedBy[0].Should().Be(Pod.InstanceIdOf("user", 1, null));
         }
 
         [Test]

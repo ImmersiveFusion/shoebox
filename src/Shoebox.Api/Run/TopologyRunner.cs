@@ -234,7 +234,7 @@ public sealed class TopologyRunner
         }
 
         var instance = SelectInstance(pod, state.RunIndex);
-        var source = _pool.For(pod.ServiceName, instance);
+        var source = _pool.For(pod.ServiceName, instance, pod.Revision);
 
         // Times come from the model, not from how long this loop took to run. A
         // walk of six pods finishes in microseconds, which exports a trace where
@@ -262,10 +262,10 @@ public sealed class TopologyRunner
         {
             state.SpanCount++;
             state.RootTraceId ??= activity.TraceId.ToString();
-            state.ServedBy.Add($"{pod.ServiceName}-{instance}");
+            state.ServedBy.Add(pod.InstanceId(instance));
 
             activity.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-            activity.SetTag("service.instance.id", $"{pod.ServiceName}-{instance}");
+            activity.SetTag("service.instance.id", pod.InstanceId(instance));
             // A consumer is a messaging span and only a messaging span. It was
             // also carrying http.request.method, which says this service was
             // reached over HTTP when it was reached off a queue. Anything reading
@@ -443,7 +443,7 @@ public sealed class TopologyRunner
         // shared link is still a runnable repro.
         var messageId = $"{queue.ServiceName}-{state.RunIndex}";
 
-        var source = _pool.For(producer.ServiceName, instance);
+        var source = _pool.For(producer.ServiceName, instance, producer.Revision);
         using var publish = source.StartActivity(
             $"publish {queue.ServiceName}",
             ActivityKind.Producer,
@@ -458,7 +458,7 @@ public sealed class TopologyRunner
             state.SpanCount++;
             state.RootTraceId ??= publish.TraceId.ToString();
             publish.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
-            publish.SetTag("service.instance.id", $"{producer.ServiceName}-{instance}");
+            publish.SetTag("service.instance.id", producer.InstanceId(instance));
             foreach (var (k, v) in MessagingTags(queue, "publish", "send", messageId)) publish.SetTag(k, v);
         }
 
@@ -601,7 +601,7 @@ public sealed class TopologyRunner
     /// </summary>
     private void EmitDependencyCall(Pod from, Pod to, Activity? parent, RunState state, int instance)
     {
-        var source = _pool.For(from.ServiceName, instance);
+        var source = _pool.For(from.ServiceName, instance, from.Revision);
         using var activity = source.StartActivity(
             to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, null).SpanName : SpanName(to),
             ActivityKind.Client,
@@ -635,7 +635,7 @@ public sealed class TopologyRunner
         var db = to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, reason) : null;
         var error = db?.Error;
 
-        var source = _pool.For(from.ServiceName, instance);
+        var source = _pool.For(from.ServiceName, instance, from.Revision);
         using var activity = source.StartActivity(
             db?.SpanName ?? $"{from.ServiceName} -> {to.ServiceName}",
             ActivityKind.Client,

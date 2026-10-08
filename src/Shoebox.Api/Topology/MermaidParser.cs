@@ -8,7 +8,7 @@ namespace Shoebox.Api.Topology;
 ///
 /// There is no format to invent here. Mermaid is what every model writes fluently,
 /// every developer already reads, and thousands of READMEs already contain. The
-/// extension surface is three optional edge labels and two label suffixes, small
+/// extension surface is three optional edge labels and three label suffixes, small
 /// enough to document beside the paste box.
 ///
 /// The parser is deliberately forgiving. Anything it does not understand becomes a
@@ -66,12 +66,24 @@ public static partial class MermaidParser
     [GeneratedRegex(@"^\s*class\s+(?<ids>[A-Za-z0-9_,\s-]+?)\s+broken\s*$", RegexOptions.Compiled)]
     private static partial Regex ClassBrokenLine();
 
-    // "Worker x5" -> replicas, "Worker #2" -> pinned instance
-    [GeneratedRegex(@"\s+x(?<n>\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    // "Worker x5" -> replicas, "Worker #2" -> pinned instance.
+    // [0-9], not \d: \d matches any Unicode digit ("x٣"), which int.Parse then
+    // rejects, and nine digits always fit an int.
+    [GeneratedRegex(@"\s+x(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex ReplicaSuffix();
 
-    [GeneratedRegex(@"\s+#(?<n>\d+)\s*$", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\s+#(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled)]
     private static partial Regex InstanceSuffix();
+
+    /// <summary>
+    /// "Orders API x3 rev2" -> revision 2: a redeploy that replaced every pod.
+    ///
+    /// Lowercase only, and a word of its own after whitespace, so a name that merely
+    /// contains it stays a name: "Orders Rev2" and "Abbrev2" are services, not
+    /// revisions. Reading either as a marker would quietly rename the service.
+    /// </summary>
+    [GeneratedRegex(@"\s+rev(?<n>[0-9]{1,9})\s*$", RegexOptions.Compiled)]
+    private static partial Regex RevisionSuffix();
 
     // subgraph HUBA["Hub network"] -- the id, so an edge drawn to the group can be named
     [GeneratedRegex(@"^\s*subgraph\s+(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
@@ -254,7 +266,7 @@ public static partial class MermaidParser
             var node = NodeLine().Match(line);
             if (node.Success)
             {
-                Upsert(pods, order, node.Groups["id"].Value, node.Groups["shape"].Value);
+                Upsert(pods, order, notes, node.Groups["id"].Value, node.Groups["shape"].Value);
                 continue;
             }
 
@@ -347,7 +359,7 @@ public static partial class MermaidParser
 
         foreach (var token in tokens)
         {
-            Upsert(pods, order, token.Groups["id"].Value, token.Groups["shape"].Value);
+            Upsert(pods, order, notes, token.Groups["id"].Value, token.Groups["shape"].Value);
         }
 
         for (var i = 0; i < links.Count; i++)
@@ -425,7 +437,7 @@ public static partial class MermaidParser
         };
     }
 
-    private static void Upsert(Dictionary<string, Pod> pods, List<string> order, string id, string? shape)
+    private static void Upsert(Dictionary<string, Pod> pods, List<string> order, List<string> notes, string id, string? shape)
     {
         var hasShape = !string.IsNullOrEmpty(shape);
         if (pods.ContainsKey(id) && !hasShape) return;
@@ -433,6 +445,9 @@ public static partial class MermaidParser
         var (label, kind) = ReadShape(id, shape);
         var replicas = 1;
         int? pinned = null;
+
+        // Either order reads the same: "x3 rev2" and "rev2 x3".
+        var revision = TakeRevision(ref label);
 
         var rep = ReplicaSuffix().Match(label);
         if (rep.Success)
@@ -450,9 +465,28 @@ public static partial class MermaidParser
             }
         }
 
-        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned };
+        revision ??= TakeRevision(ref label);
+
+        // Two markers on one label: the outer one wins and the other stays in the
+        // name, which changes service.name. Kept as written and said out loud,
+        // because a renamed service is easy to miss in a backend.
+        if (revision is not null && RevisionSuffix().IsMatch(label))
+        {
+            notes.Add($"{id} has more than one rev marker: rev{revision} was used and the rest stayed in the name, so service.name is {Slug(label)}. Write one rev marker per node.");
+        }
+
+        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned, Revision = revision };
         if (!pods.ContainsKey(id)) order.Add(id);
         pods[id] = pod;
+    }
+
+    private static int? TakeRevision(ref string label)
+    {
+        var match = RevisionSuffix().Match(label);
+        if (!match.Success) return null;
+
+        label = label[..match.Index].Trim();
+        return int.Parse(match.Groups["n"].Value);
     }
 
     private static (string Label, PodKind Kind) ReadShape(string id, string? shape)

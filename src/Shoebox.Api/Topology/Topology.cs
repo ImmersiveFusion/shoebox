@@ -27,6 +27,128 @@ public sealed record Pod(
     /// </summary>
     public int? PinnedInstance { get; init; }
 
+    /// <summary>
+    /// Set when the label named a revision, as in "Orders API x3 rev2": a redeploy
+    /// that replaces every pod of the service. Null means no marker, which names pods
+    /// exactly as revision 0 would.
+    ///
+    /// Pod names are stable on purpose: scale x2 to x4 and back and the first two
+    /// pods keep their names, as pods that survived a scale-out would. A redeploy is
+    /// the opposite case, where every pod of the service is replaced, and bumping the
+    /// revision is how a diagram says so.
+    /// </summary>
+    public int? Revision { get; init; }
+
+    /// <summary>The service.instance.id of the pod at one position, 1-based.</summary>
+    public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Revision);
+
+    /// <summary>Every pod name this node can serve from, in position order.</summary>
+    public IReadOnlyList<string> InstanceIds =>
+        PinnedInstance is { } pinned
+            ? new[] { InstanceId(pinned) }
+            : InstanceIdsOf(ServiceName, Math.Clamp(Replicas, 1, UniqueNamePositions), Revision);
+
+    /// <summary>
+    /// A Deployment's pod name: <c>{service}-{templateHash}-{suffix}</c>, as in
+    /// <c>orders-api-9fgkfp96z4-bh4ks</c>.
+    ///
+    /// A backend that groups pods into services is tested against names that look
+    /// like the ones it will meet, and those are never <c>orders-api-1</c>. The
+    /// template hash is the same for every pod of one service at one revision and
+    /// changes with the revision, the way a ReplicaSet's does when its pod template
+    /// changes; the suffix is per pod. Both are SHA-256 based rather than
+    /// <c>GetHashCode</c>, which differs between processes, so a shared link names
+    /// the same pods everywhere. The position <c>n</c> chooses the pod and is not
+    /// part of its name, so <c>#2</c> and <c>broken on #3</c> mean what they did.
+    /// </summary>
+    public static string InstanceIdOf(string serviceName, int instance, int? revision)
+    {
+        if (instance is >= 1 and <= UniqueNamePositions)
+        {
+            return InstanceIdsOf(serviceName, instance, revision)[instance - 1];
+        }
+
+        // Outside the guaranteed range: named by its first draw alone, so the cost
+        // of one name never grows with a replica count somebody typed.
+        var rev = revision ?? 0;
+        return $"{serviceName}-{TemplateHash(serviceName, rev)}-{SuffixDraw(serviceName, rev, instance, 0)}";
+    }
+
+    /// <summary>
+    /// The names of positions 1..count of one service at one revision, where count
+    /// is at most <see cref="UniqueNamePositions"/>.
+    /// </summary>
+    public static IReadOnlyList<string> InstanceIdsOf(string serviceName, int count, int? revision)
+    {
+        var rev = revision ?? 0;
+        var hash = TemplateHash(serviceName, rev);
+        return AssignSuffixes(Math.Min(count, UniqueNamePositions), (n, attempt) => SuffixDraw(serviceName, rev, n, attempt))
+            .Select(suffix => $"{serviceName}-{hash}-{suffix}")
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Positions up to this one are guaranteed distinct names, and
+    /// <c>/topology/parse</c> lists at most this many per node. Naming position n
+    /// costs n hashes, and n comes from a diagram anybody can paste, so it is
+    /// bounded; far above any honest diagram, which runs to a few dozen pods.
+    /// </summary>
+    public const int UniqueNamePositions = 256;
+
+    private static string SuffixDraw(string serviceName, int revision, int position, int attempt) => SafeEncode(
+        attempt == 0 ? $"{serviceName}|{revision}|{position}" : $"{serviceName}|{revision}|{position}|{attempt}",
+        SuffixLength);
+
+    /// <summary>
+    /// Suffixes for positions 1..count, unique by construction.
+    ///
+    /// Five characters from 27 is about 14 million names, so two pods of one
+    /// service can draw the same one, and with the pool keyed on the name they
+    /// would silently become one pod. Kubernetes retries a taken name; this does the
+    /// same, deterministically: positions are assigned in order, and a suffix taken
+    /// by a lower position is redrawn with an attempt counter until it is free.
+    /// Lower positions never depend on higher ones, so scaling up keeps every
+    /// existing name. <paramref name="candidate"/> is (position, attempt) to suffix,
+    /// and is a parameter so a test can force a collision.
+    /// </summary>
+    public static IReadOnlyList<string> AssignSuffixes(int count, Func<int, int, string> candidate)
+    {
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var suffixes = new string[count];
+        for (var n = 1; n <= count; n++)
+        {
+            var attempt = 0;
+            var suffix = candidate(n, attempt);
+            while (!taken.Add(suffix)) suffix = candidate(n, ++attempt);
+            suffixes[n - 1] = suffix;
+        }
+
+        return suffixes;
+    }
+
+    /// <summary>The ReplicaSet part of every pod name for one service at one revision.</summary>
+    public static string TemplateHash(string serviceName, int revision) =>
+        SafeEncode($"{serviceName}|{revision}", TemplateHashLength);
+
+    public const int TemplateHashLength = 10;
+
+    public const int SuffixLength = 5;
+
+    /// <summary>
+    /// The alphabet Kubernetes uses for generated names (rand.SafeEncodeString in
+    /// k8s.io/apimachinery): no vowels, so no words, and no 0, 1 or 3, so nothing
+    /// that reads as a letter.
+    /// </summary>
+    public const string SafeAlphabet = "bcdfghjklmnpqrstvwxz2456789";
+
+    private static string SafeEncode(string input, int length)
+    {
+        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        var chars = new char[length];
+        for (var i = 0; i < length; i++) chars[i] = SafeAlphabet[digest[i] % SafeAlphabet.Length];
+        return new string(chars);
+    }
+
     /// <summary>Default latency by shape. Overridable per edge later.</summary>
     public int DefaultLatencyMs => Kind switch
     {

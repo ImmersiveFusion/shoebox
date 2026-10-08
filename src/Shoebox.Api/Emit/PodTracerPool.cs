@@ -3,6 +3,7 @@ using System.Diagnostics;
 using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Shoebox.Api.Topology;
 
 namespace Shoebox.Api.Emit;
 
@@ -21,7 +22,7 @@ namespace Shoebox.Api.Emit;
 /// </summary>
 public sealed class PodTracerPool : IDisposable
 {
-    private readonly ConcurrentDictionary<string, ActivitySource> _sources = new();
+    private readonly ConcurrentDictionary<(string Service, string InstanceId), ActivitySource> _sources = new();
     private readonly List<TracerProvider> _providers = new();
     private readonly object _gate = new();
     private readonly string _hostName = Environment.MachineName;
@@ -37,15 +38,18 @@ public sealed class PodTracerPool : IDisposable
     /// Replicas of the same service share service.name and differ by
     /// service.instance.id, which is what OpenTelemetry defines that attribute for.
     /// </summary>
-    public ActivitySource For(string serviceName, int instance)
+    public ActivitySource For(string serviceName, int instance, int? revision = null)
     {
-        var instanceId = $"{serviceName}-{instance}";
-        return _sources.GetOrAdd(instanceId, id =>
+        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
+        return _sources.GetOrAdd((serviceName, instanceId), key =>
         {
             // The ActivitySource name is the instance id so each pod's provider can
-            // subscribe to exactly its own spans and nobody else's.
-            var source = new ActivitySource(id);
-            var provider = BuildProvider(serviceName, id);
+            // subscribe to exactly its own spans and nobody else's. A pod name ends in
+            // two fixed-length parts after the service, so two services can never
+            // produce the same one; the key carries the service anyway, so that a
+            // future change to the name format cannot quietly merge two pods.
+            var source = new ActivitySource(key.InstanceId);
+            var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
             lock (_gate)
             {
                 _providers.Add(provider);
@@ -55,7 +59,7 @@ public sealed class PodTracerPool : IDisposable
         });
     }
 
-    private TracerProvider BuildProvider(string serviceName, string instanceId)
+    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName)
     {
         var resource = ResourceBuilder.CreateDefault()
             .AddService(serviceName)
@@ -68,7 +72,7 @@ public sealed class PodTracerPool : IDisposable
         var builder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resource)
             .SetSampler(new DeclaredFullSampler())
-            .AddSource(instanceId);
+            .AddSource(sourceName);
 
         // Vendor neutral by construction. Endpoint and headers are the standard OTLP
         // ones, resolved from configuration the way Snowglobe resolves its flags, so
