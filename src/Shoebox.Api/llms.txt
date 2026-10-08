@@ -66,6 +66,7 @@ conventions, so there is nothing new to learn.
 | `ext{{Stripe}}` | a third party |
 | `worker[Worker x5]` | five replicas, load balanced |
 | `worker[Worker #2]` | one named instance |
+| `worker[Worker x5 gen2]` | a redeploy: every instance id becomes `worker-g2-{n}` |
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
@@ -73,7 +74,7 @@ conventions, so there is nothing new to learn.
 | `q -->\|phantom\| b` | b never runs, so nothing consumes what q published |
 | `class db broken` | the pod is down: **every** call into it fails, from every caller |
 
-Six things that will bite you if nobody says them:
+Seven things that will bite you if nobody says them:
 
 **The entry point is the first pod, in document order, that nothing calls.** Order is
 meaning, not formatting. Declare the node you want the request to start at first. If
@@ -98,6 +99,33 @@ sends one request to *one* worker. Two arrows out of one node call *both*. So "a
 three more instances of the inventory API" is `inv[Inventory API x3]` — one pod at
 three replicas — and not three nodes. Three nodes means something different and the
 trace will show it.
+
+**A generation is a redeploy; scaling is not.** Replica ids are stable: `x2` to
+`x4` and back keeps `worker-1` and `worker-2`, as pods that survived a scale-out
+would. Add `gen<N>` to
+the label and every instance id becomes `{service}-g<N>-{n}`, so bumping the number
+replaces every pod of the service at once while `service.name` stays the same. With
+no marker the ids are exactly what they always were. The marker is lowercase `gen`
+and a number, after or before the replica count (`x3 gen2` or `gen2 x3`).
+
+For the overlap window of a rollout, draw both generations as two nodes with the
+same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:
+
+```mermaid
+flowchart LR
+  gw[Gateway] --> old[Orders API x2 gen1]
+  gw --> new[Orders API x2 gen2]
+```
+
+Each request reaches both, so the old and new instances emit in the same window
+under one `orders-api`. That is mirrored traffic rather than a load balancer's
+split, because a run is exactly one request; what it shows honestly is the thing a
+backend has to get right, two instance sets of one service live at once. To test
+that a tool keeps one node per service through all of it, fire the same diagram
+edited in steps: `api[Orders API x2 gen1]`, then `x4 gen1`, then `x2 gen1` (scaling,
+ids kept), then the two-node overlap above, then `api[Orders API x2 gen2]` alone
+(every old instance gone). Start at `gen1` rather than no marker if you want the
+scaling steps and the redeploy to share an id scheme.
 
 **A cycle is fine, and it does not mean what you might fear.** A pub/sub topic drawn
 with arrows going both ways — `accounting --> topic` *and* `topic --> accounting` —
@@ -195,7 +223,8 @@ POST /topology/parse
 {"diagram":"flowchart TD\n  api[Orders API] --> db[(Postgres)]"}
 
 → {"pods":[{"id":"api","label":"Orders API","serviceName":"orders-api",
-            "kind":"service","replicas":1,"pinnedInstance":null}, …],
+            "kind":"service","replicas":1,"pinnedInstance":null,
+            "generation":null}, …],
    "calls":[{"from":"api","to":"db","broken":false,"brokenInstances":[],"reason":null}],
    "entry":"api",
    "notes":[]}

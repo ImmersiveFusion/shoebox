@@ -27,6 +27,30 @@ public sealed record Pod(
     /// </summary>
     public int? PinnedInstance { get; init; }
 
+    /// <summary>
+    /// Set when the label named a deployment generation, as in "Orders API x3 gen2".
+    /// Null means no generation was drawn, and instance ids keep the shape they have
+    /// always had.
+    ///
+    /// Replica numbers are stable on purpose: scale x2 to x4 and back and the first
+    /// two instances keep their ids, as pods that survived a scale-out would. A
+    /// redeploy is the opposite case, where every pod of the service is replaced,
+    /// and that needs ids that cannot be confused with the old ones. Bumping the
+    /// generation is how a diagram says so.
+    /// </summary>
+    public int? Generation { get; init; }
+
+    /// <summary>The service.instance.id of one replica of this pod.</summary>
+    public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Generation);
+
+    /// <summary>
+    /// <c>{service}-{n}</c> with no generation, <c>{service}-g{gen}-{n}</c> with one.
+    /// The ungenerationed form is unchanged so every diagram and link written before
+    /// generations existed replays exactly as it did.
+    /// </summary>
+    public static string InstanceIdOf(string serviceName, int instance, int? generation) =>
+        generation is { } gen ? $"{serviceName}-g{gen}-{instance}" : $"{serviceName}-{instance}";
+
     /// <summary>Default latency by shape. Overridable per edge later.</summary>
     public int DefaultLatencyMs => Kind switch
     {

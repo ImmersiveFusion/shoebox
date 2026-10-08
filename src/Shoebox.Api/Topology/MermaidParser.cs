@@ -8,7 +8,7 @@ namespace Shoebox.Api.Topology;
 ///
 /// There is no format to invent here. Mermaid is what every model writes fluently,
 /// every developer already reads, and thousands of READMEs already contain. The
-/// extension surface is three optional edge labels and two label suffixes, small
+/// extension surface is three optional edge labels and three label suffixes, small
 /// enough to document beside the paste box.
 ///
 /// The parser is deliberately forgiving. Anything it does not understand becomes a
@@ -72,6 +72,16 @@ public static partial class MermaidParser
 
     [GeneratedRegex(@"\s+#(?<n>\d+)\s*$", RegexOptions.Compiled)]
     private static partial Regex InstanceSuffix();
+
+    /// <summary>
+    /// "Orders API x3 gen2" -> deployment generation 2.
+    ///
+    /// Lowercase only, and the word rather than a bare "v2": "Orders API v2" is how
+    /// people already name a service, and reading that as a deployment would quietly
+    /// rename it. Nobody calls a service "gen2" by accident.
+    /// </summary>
+    [GeneratedRegex(@"\s+gen(?<n>\d{1,9})\s*$", RegexOptions.Compiled)]
+    private static partial Regex GenerationSuffix();
 
     // subgraph HUBA["Hub network"] -- the id, so an edge drawn to the group can be named
     [GeneratedRegex(@"^\s*subgraph\s+(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
@@ -434,6 +444,9 @@ public static partial class MermaidParser
         var replicas = 1;
         int? pinned = null;
 
+        // Either order reads the same: "x3 gen2" and "gen2 x3".
+        var generation = TakeGeneration(ref label);
+
         var rep = ReplicaSuffix().Match(label);
         if (rep.Success)
         {
@@ -450,9 +463,20 @@ public static partial class MermaidParser
             }
         }
 
-        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned };
+        generation ??= TakeGeneration(ref label);
+
+        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned, Generation = generation };
         if (!pods.ContainsKey(id)) order.Add(id);
         pods[id] = pod;
+    }
+
+    private static int? TakeGeneration(ref string label)
+    {
+        var gen = GenerationSuffix().Match(label);
+        if (!gen.Success) return null;
+
+        label = label[..gen.Index].Trim();
+        return int.Parse(gen.Groups["n"].Value);
     }
 
     private static (string Label, PodKind Kind) ReadShape(string id, string? shape)

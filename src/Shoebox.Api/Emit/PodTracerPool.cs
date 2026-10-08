@@ -3,6 +3,7 @@ using System.Diagnostics;
 using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Shoebox.Api.Topology;
 
 namespace Shoebox.Api.Emit;
 
@@ -37,9 +38,9 @@ public sealed class PodTracerPool : IDisposable
     /// Replicas of the same service share service.name and differ by
     /// service.instance.id, which is what OpenTelemetry defines that attribute for.
     /// </summary>
-    public ActivitySource For(string serviceName, int instance)
+    public ActivitySource For(string serviceName, int instance, int? generation = null)
     {
-        var instanceId = $"{serviceName}-{instance}";
+        var instanceId = Pod.InstanceIdOf(serviceName, instance, generation);
         return _sources.GetOrAdd(instanceId, id =>
         {
             // The ActivitySource name is the instance id so each pod's provider can
