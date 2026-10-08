@@ -140,7 +140,14 @@ flowchart LR
 
             activity.Should().NotBeNull();
             activity!.Source.Name.Should().Be("orders-api/orders-api-g2-1");
-            _pool.For("orders-api", 1).Name.Should().Be("orders-api/orders-api-1");
+        }
+
+        [Test]
+        public void A_Pod_Without_A_Generation_Keeps_Its_Old_Scope_Name()
+        {
+            // The source name is the OTLP instrumentation scope name, so existing
+            // diagrams must export exactly what they did before generations existed.
+            _pool.For("orders-api", 1).Name.Should().Be("orders-api-1");
         }
 
         [Test]
@@ -156,7 +163,8 @@ flowchart LR
             var second = _pool.For("x-g1", 2);
 
             second.Should().NotBeSameAs(first, "each pod exports under its own service.name");
-            second.Name.Should().NotBe(first.Name, "a provider subscribes by source name");
+            first.Name.Should().Be("x/x-g1-2");
+            second.Name.Should().Be("x-g1-2", "a pod with no generation keeps its old name");
         }
 
         [TestCase("Orders API gen0", 0, "orders-api-g0-1")]

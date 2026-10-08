@@ -45,10 +45,16 @@ public sealed class PodTracerPool : IDisposable
         {
             // Keyed on the service as well as the instance id, because with a
             // generation the id alone is ambiguous: service "x" gen1 pod 2 and a
-            // service labelled "X G1" pod 2 are both x-g1-2. The source name carries
-            // both for the same reason, so each pod's provider subscribes to exactly
-            // its own spans and nobody else's. A slug never contains '/'.
-            var source = new ActivitySource($"{key.Service}/{key.InstanceId}");
+            // service labelled "X G1" pod 2 are both x-g1-2.
+            //
+            // The source name is what each pod's provider subscribes to, so it has to
+            // be unique too, and it goes out as the instrumentation scope name, so it
+            // must not change for a diagram that has no generation. A pod without one
+            // keeps the bare instance id it always had; a pod with one is named
+            // {service}/{instanceId}, which a slug can never produce because a slug
+            // never contains '/'. The colliding pair above becomes x/x-g1-2 and x-g1-2.
+            var sourceName = generation is null ? key.InstanceId : $"{key.Service}/{key.InstanceId}";
+            var source = new ActivitySource(sourceName);
             var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
             lock (_gate)
             {
