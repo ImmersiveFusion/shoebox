@@ -49,7 +49,7 @@ semantic conventions, so nothing new has to be learned.
 | `ext{{Stripe}}` | a third party |
 | `worker[Worker x5]` | five replicas, load balanced |
 | `worker[Worker #2]` | one named instance |
-| `worker[Worker x5 gen2]` | a redeploy: every instance id becomes `worker-g2-{n}` |
+| `worker[Worker x5 rev2]` | a rollout that replaces every pod: ids become `worker-r2-{n}` |
 | `a -->\|broken\| b` | this call always fails |
 | `a -->\|broken: wrong table\| b` | and this is why |
 | `a -->\|broken on #3\| b` | only instance 3 fails |
@@ -114,25 +114,26 @@ your diagram on screen under the same name.
 **Replicas are load balanced. Separate arrows are fan-out.** `q --> worker[Worker x5]`
 sends one request to *one* worker. Two arrows out of one node call *both*.
 
-**A generation is a redeploy.**
+**A revision is a redeploy.**
 Replica ids are stable: `x2` to `x4` and back keeps `worker-1` and
-`worker-2`, as pods that survived a scale-out would. Add `gen<N>` to the label and
-every instance id becomes `{service}-g<N>-{n}`, so bumping the number replaces
-every pod of the service at once while `service.name` stays the same. The marker is
-lowercase `gen` and a number, after or before the replica count (`x3 gen2` or
-`gen2 x3`); `gen0` is allowed and leading zeros normalize (`gen02` is `gen2`). A
-node with no marker keeps exactly the ids it always had, with one exception: a label
-that already ended in ` gen<digits>`, such as `a[Payments gen2]`, is now read as a
+`worker-2`, as pods that survived a scale-out would. A revision is the other case,
+a rollout that replaces every pod of the service. Add `rev<N>` to the label and
+every instance id becomes `{service}-r<N>-{n}`, so bumping the number replaces
+every pod at once while `service.name` stays the same. The marker is lowercase
+`rev` and a number, after or before the replica count (`x3 rev2` or `rev2 x3`);
+`rev0` is allowed and leading zeros normalize (`rev02` is `rev2`). A node with no
+marker keeps exactly the ids it always had, with one exception: a label that
+already ended in ` rev<digits>`, such as `a[Payments rev2]`, is now read as a
 marker, so its `service.name` loses that word. Write one marker per node; a second
 one stays in the name and `notes` says so.
 
-For the overlap window of a rollout, draw both generations as two nodes with the
+For the overlap window of a rollout, draw both revisions as two nodes with the
 same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:
 
 ```mermaid
 flowchart LR
-  gw[Gateway] --> old[Orders API x2 gen1]
-  gw --> new[Orders API x2 gen2]
+  gw[Gateway] --> old[Orders API x2 rev1]
+  gw --> new[Orders API x2 rev2]
 ```
 
 Each request reaches both, so the old and new instances emit in the same window
@@ -140,9 +141,9 @@ under one `orders-api`. That is mirrored traffic rather than a load balancer's
 split, because a run is exactly one request; what it shows honestly is the thing a
 backend has to get right, two instance sets of one service live at once. To test
 that a tool keeps one node per service through all of it, fire the same diagram
-edited in steps: `api[Orders API x2 gen1]`, then `x4 gen1`, then `x2 gen1` (scaling,
-ids kept), then the two-node overlap above, then `api[Orders API x2 gen2]` alone
-(every old instance gone). Start at `gen1` rather than no marker if you want the
+edited in steps: `api[Orders API x2 rev1]`, then `x4 rev1`, then `x2 rev1` (scaling,
+ids kept), then the two-node overlap above, then `api[Orders API x2 rev2]` alone
+(every old instance gone). Start at `rev1` rather than no marker if you want the
 scaling steps and the redeploy to share an id scheme.
 
 **A cycle is an architecture, not a mistake.** Draw a pub/sub topic with arrows

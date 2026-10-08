@@ -234,7 +234,7 @@ public sealed class TopologyRunner
         }
 
         var instance = SelectInstance(pod, state.RunIndex);
-        var source = _pool.For(pod.ServiceName, instance, pod.Generation);
+        var source = _pool.For(pod.ServiceName, instance, pod.Revision);
 
         // Times come from the model, not from how long this loop took to run. A
         // walk of six pods finishes in microseconds, which exports a trace where
@@ -443,7 +443,7 @@ public sealed class TopologyRunner
         // shared link is still a runnable repro.
         var messageId = $"{queue.ServiceName}-{state.RunIndex}";
 
-        var source = _pool.For(producer.ServiceName, instance, producer.Generation);
+        var source = _pool.For(producer.ServiceName, instance, producer.Revision);
         using var publish = source.StartActivity(
             $"publish {queue.ServiceName}",
             ActivityKind.Producer,
@@ -601,7 +601,7 @@ public sealed class TopologyRunner
     /// </summary>
     private void EmitDependencyCall(Pod from, Pod to, Activity? parent, RunState state, int instance)
     {
-        var source = _pool.For(from.ServiceName, instance, from.Generation);
+        var source = _pool.For(from.ServiceName, instance, from.Revision);
         using var activity = source.StartActivity(
             to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, null).SpanName : SpanName(to),
             ActivityKind.Client,
@@ -635,7 +635,7 @@ public sealed class TopologyRunner
         var db = to.Kind == PodKind.Datastore ? DatabaseCall.Describe(to, from, reason) : null;
         var error = db?.Error;
 
-        var source = _pool.For(from.ServiceName, instance, from.Generation);
+        var source = _pool.For(from.ServiceName, instance, from.Revision);
         using var activity = source.StartActivity(
             db?.SpanName ?? $"{from.ServiceName} -> {to.ServiceName}",
             ActivityKind.Client,

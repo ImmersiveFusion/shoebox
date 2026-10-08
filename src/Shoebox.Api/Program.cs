@@ -274,7 +274,7 @@ app.MapPost("/topology/parse", (DiagramRequest request) =>
             kind = p.Kind.ToString().ToLowerInvariant(),
             replicas = p.Replicas,
             pinnedInstance = p.PinnedInstance,
-            generation = p.Generation,
+            revision = p.Revision,
         }),
         calls = graph.Calls.Select(c => new
         {

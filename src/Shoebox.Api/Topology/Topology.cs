@@ -28,28 +28,28 @@ public sealed record Pod(
     public int? PinnedInstance { get; init; }
 
     /// <summary>
-    /// Set when the label named a deployment generation, as in "Orders API x3 gen2".
-    /// Null means no generation was drawn, and instance ids keep the shape they have
-    /// always had.
+    /// Set when the label named a revision, as in "Orders API x3 rev2": a redeploy
+    /// that replaces every pod of the service. Null means no revision was drawn, and
+    /// instance ids keep the shape they have always had.
     ///
     /// Replica numbers are stable on purpose: scale x2 to x4 and back and the first
     /// two instances keep their ids, as pods that survived a scale-out would. A
     /// redeploy is the opposite case, where every pod of the service is replaced,
     /// and that needs ids that cannot be confused with the old ones. Bumping the
-    /// generation is how a diagram says so.
+    /// revision is how a diagram says so.
     /// </summary>
-    public int? Generation { get; init; }
+    public int? Revision { get; init; }
 
     /// <summary>The service.instance.id of one replica of this pod.</summary>
-    public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Generation);
+    public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Revision);
 
     /// <summary>
-    /// <c>{service}-{n}</c> with no generation, <c>{service}-g{gen}-{n}</c> with one.
-    /// The ungenerationed form is unchanged so every diagram and link written before
-    /// generations existed replays exactly as it did.
+    /// <c>{service}-{n}</c> with no revision, <c>{service}-r{revision}-{n}</c> with one.
+    /// The unrevisioned form is unchanged so every diagram and link written before
+    /// revisions existed replays exactly as it did.
     /// </summary>
-    public static string InstanceIdOf(string serviceName, int instance, int? generation) =>
-        generation is { } gen ? $"{serviceName}-g{gen}-{instance}" : $"{serviceName}-{instance}";
+    public static string InstanceIdOf(string serviceName, int instance, int? revision) =>
+        revision is { } r ? $"{serviceName}-r{r}-{instance}" : $"{serviceName}-{instance}";
 
     /// <summary>Default latency by shape. Overridable per edge later.</summary>
     public int DefaultLatencyMs => Kind switch

@@ -38,22 +38,22 @@ public sealed class PodTracerPool : IDisposable
     /// Replicas of the same service share service.name and differ by
     /// service.instance.id, which is what OpenTelemetry defines that attribute for.
     /// </summary>
-    public ActivitySource For(string serviceName, int instance, int? generation = null)
+    public ActivitySource For(string serviceName, int instance, int? revision = null)
     {
-        var instanceId = Pod.InstanceIdOf(serviceName, instance, generation);
+        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
         return _sources.GetOrAdd((serviceName, instanceId), key =>
         {
             // Keyed on the service as well as the instance id, because with a
-            // generation the id alone is ambiguous: service "x" gen1 pod 2 and a
-            // service labelled "X G1" pod 2 are both x-g1-2.
+            // revision the id alone is ambiguous: service "x" rev1 pod 2 and a
+            // service labelled "X R1" pod 2 are both x-r1-2.
             //
             // The source name is what each pod's provider subscribes to, so it has to
             // be unique too, and it goes out as the instrumentation scope name, so it
-            // must not change for a diagram that has no generation. A pod without one
+            // must not change for a diagram that has no revision. A pod without one
             // keeps the bare instance id it always had; a pod with one is named
             // {service}/{instanceId}, which a slug can never produce because a slug
-            // never contains '/'. The colliding pair above becomes x/x-g1-2 and x-g1-2.
-            var sourceName = generation is null ? key.InstanceId : $"{key.Service}/{key.InstanceId}";
+            // never contains '/'. The colliding pair above becomes x/x-r1-2 and x-r1-2.
+            var sourceName = revision is null ? key.InstanceId : $"{key.Service}/{key.InstanceId}";
             var source = new ActivitySource(sourceName);
             var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
             lock (_gate)

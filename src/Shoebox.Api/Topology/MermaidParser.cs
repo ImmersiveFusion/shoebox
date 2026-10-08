@@ -74,14 +74,14 @@ public static partial class MermaidParser
     private static partial Regex InstanceSuffix();
 
     /// <summary>
-    /// "Orders API x3 gen2" -> deployment generation 2.
+    /// "Orders API x3 rev2" -> revision 2: a redeploy that replaced every pod.
     ///
-    /// Lowercase only, and the word rather than a bare "v2": "Orders API v2" is how
-    /// people already name a service, and reading that as a deployment would quietly
-    /// rename it. Nobody calls a service "gen2" by accident.
+    /// Lowercase only, and a word of its own after whitespace, so a name that merely
+    /// contains it stays a name: "Orders Rev2" and "Abbrev2" are services, not
+    /// revisions. Reading either as a marker would quietly rename the service.
     /// </summary>
-    [GeneratedRegex(@"\s+gen(?<n>\d{1,9})\s*$", RegexOptions.Compiled)]
-    private static partial Regex GenerationSuffix();
+    [GeneratedRegex(@"\s+rev(?<n>\d{1,9})\s*$", RegexOptions.Compiled)]
+    private static partial Regex RevisionSuffix();
 
     // subgraph HUBA["Hub network"] -- the id, so an edge drawn to the group can be named
     [GeneratedRegex(@"^\s*subgraph\s+(?<id>[A-Za-z0-9_][A-Za-z0-9_-]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
@@ -444,8 +444,8 @@ public static partial class MermaidParser
         var replicas = 1;
         int? pinned = null;
 
-        // Either order reads the same: "x3 gen2" and "gen2 x3".
-        var generation = TakeGeneration(ref label);
+        // Either order reads the same: "x3 rev2" and "rev2 x3".
+        var revision = TakeRevision(ref label);
 
         var rep = ReplicaSuffix().Match(label);
         if (rep.Success)
@@ -463,28 +463,28 @@ public static partial class MermaidParser
             }
         }
 
-        generation ??= TakeGeneration(ref label);
+        revision ??= TakeRevision(ref label);
 
         // Two markers on one label: the outer one wins and the other stays in the
         // name, which changes service.name. Kept as written and said out loud,
         // because a renamed service is easy to miss in a backend.
-        if (generation is not null && GenerationSuffix().IsMatch(label))
+        if (revision is not null && RevisionSuffix().IsMatch(label))
         {
-            notes.Add($"{id} has more than one gen marker: gen{generation} was used and the rest stayed in the name, so service.name is {Slug(label)}. Write one gen marker per node.");
+            notes.Add($"{id} has more than one rev marker: rev{revision} was used and the rest stayed in the name, so service.name is {Slug(label)}. Write one rev marker per node.");
         }
 
-        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned, Generation = generation };
+        var pod = new Pod(id, label, Slug(label), kind, replicas) { PinnedInstance = pinned, Revision = revision };
         if (!pods.ContainsKey(id)) order.Add(id);
         pods[id] = pod;
     }
 
-    private static int? TakeGeneration(ref string label)
+    private static int? TakeRevision(ref string label)
     {
-        var gen = GenerationSuffix().Match(label);
-        if (!gen.Success) return null;
+        var match = RevisionSuffix().Match(label);
+        if (!match.Success) return null;
 
-        label = label[..gen.Index].Trim();
-        return int.Parse(gen.Groups["n"].Value);
+        label = label[..match.Index].Trim();
+        return int.Parse(match.Groups["n"].Value);
     }
 
     private static (string Label, PodKind Kind) ReadShape(string id, string? shape)
