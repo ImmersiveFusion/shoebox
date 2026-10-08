@@ -197,6 +197,55 @@ flowchart LR
         }
 
         [Test]
+        public void A_Taken_Suffix_Is_Redrawn_And_Earlier_Positions_Never_Move()
+        {
+            // Every first draw collides; only the attempt counter tells them apart.
+            static string Candidate(int position, int attempt) => attempt == 0 ? "bbbbb" : $"r{position}a{attempt}";
+
+            var three = Pod.AssignSuffixes(3, Candidate);
+            three.Should().Equal("bbbbb", "r2a1", "r3a1");
+            three.Should().OnlyHaveUniqueItems("two pods must never share a name");
+
+            Pod.AssignSuffixes(5, Candidate).Take(3).Should().Equal(three, "scaling up keeps every existing name");
+        }
+
+        [Test]
+        public void A_Redraw_Skips_Every_Name_A_Lower_Position_Holds()
+        {
+            // Position 3's first two draws are both already taken by positions 1 and 2.
+            var draws = new Dictionary<(int, int), string>
+            {
+                [(1, 0)] = "aaaaa",
+                [(2, 0)] = "ccccc",
+                [(3, 0)] = "aaaaa",
+                [(3, 1)] = "ccccc",
+                [(3, 2)] = "ddddd",
+            };
+
+            Pod.AssignSuffixes(3, (n, attempt) => draws[(n, attempt)]).Should().Equal("aaaaa", "ccccc", "ddddd");
+        }
+
+        [Test]
+        public void Many_Replicas_Still_Get_Distinct_Names()
+        {
+            var names = Api($"Orders API x{Pod.UniqueNamePositions}").InstanceIds;
+
+            names.Should().HaveCount(Pod.UniqueNamePositions).And.OnlyHaveUniqueItems();
+            names[^1].Should().Be(Pod.InstanceIdOf("orders-api", Pod.UniqueNamePositions, null));
+        }
+
+        [Test]
+        public void A_Huge_Replica_Count_Costs_A_Bounded_Amount()
+        {
+            // Naming is O(position); a pasted x2000000000 must not make a run or a parse unbounded.
+            var api = Api("Orders API x2000000000");
+
+            api.InstanceIds.Should().HaveCount(Pod.UniqueNamePositions);
+            PodName.IsMatch(api.InstanceId(1999999999)).Should().BeTrue();
+            PodName.IsMatch(Api("Orders API #0").InstanceIds.Single()).Should().BeTrue();
+        }
+
+        [Test]
         public void Similar_Service_Names_Get_Separate_Pods()
         {
             // "x" and "x-r1" were the colliding pair under the old format; any two

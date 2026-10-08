@@ -121,6 +121,9 @@ is `rev2`). A label that already ended in ` rev<digits>`, such as
 Write one marker per node; a second one stays in the name and `notes` says so. The
 `N` in `xN`, `#N` and `broken on #N` is still a position, not part of any name:
 `/topology/parse` returns each node's pod names in that order as `instanceIds`.
+Within the first 256 positions two pods of one service never share a name: a
+taken suffix is redrawn, as Kubernetes does. That is also how many names
+`instanceIds` lists.
 
 For the overlap window of a rollout, draw both revisions as two nodes with the
 same label, the way `[Worker #1]` and `[Worker #2]` are two pods of one service:

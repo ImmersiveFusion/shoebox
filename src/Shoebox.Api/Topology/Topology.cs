@@ -46,11 +46,11 @@ public sealed record Pod(
     public IReadOnlyList<string> InstanceIds =>
         PinnedInstance is { } pinned
             ? new[] { InstanceId(pinned) }
-            : Enumerable.Range(1, Math.Max(1, Replicas)).Select(InstanceId).ToArray();
+            : InstanceIdsOf(ServiceName, Math.Clamp(Replicas, 1, UniqueNamePositions), Revision);
 
     /// <summary>
     /// A Deployment's pod name: <c>{service}-{templateHash}-{suffix}</c>, as in
-    /// <c>orders-api-7d9f8b6c4x-x2k9p</c>.
+    /// <c>orders-api-9fgkfp96z4-bh4ks</c>.
     ///
     /// A backend that groups pods into services is tested against names that look
     /// like the ones it will meet, and those are never <c>orders-api-1</c>. The
@@ -63,9 +63,67 @@ public sealed record Pod(
     /// </summary>
     public static string InstanceIdOf(string serviceName, int instance, int? revision)
     {
+        if (instance is >= 1 and <= UniqueNamePositions)
+        {
+            return InstanceIdsOf(serviceName, instance, revision)[instance - 1];
+        }
+
+        // Outside the guaranteed range: named by its first draw alone, so the cost
+        // of one name never grows with a replica count somebody typed.
         var rev = revision ?? 0;
-        var suffix = SafeEncode($"{serviceName}|{rev}|{instance}", SuffixLength);
-        return $"{serviceName}-{TemplateHash(serviceName, rev)}-{suffix}";
+        return $"{serviceName}-{TemplateHash(serviceName, rev)}-{SuffixDraw(serviceName, rev, instance, 0)}";
+    }
+
+    /// <summary>
+    /// The names of positions 1..count of one service at one revision, where count
+    /// is at most <see cref="UniqueNamePositions"/>.
+    /// </summary>
+    public static IReadOnlyList<string> InstanceIdsOf(string serviceName, int count, int? revision)
+    {
+        var rev = revision ?? 0;
+        var hash = TemplateHash(serviceName, rev);
+        return AssignSuffixes(Math.Min(count, UniqueNamePositions), (n, attempt) => SuffixDraw(serviceName, rev, n, attempt))
+            .Select(suffix => $"{serviceName}-{hash}-{suffix}")
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Positions up to this one are guaranteed distinct names, and
+    /// <c>/topology/parse</c> lists at most this many per node. Naming position n
+    /// costs n hashes, and n comes from a diagram anybody can paste, so it is
+    /// bounded; far above any honest diagram, which runs to a few dozen pods.
+    /// </summary>
+    public const int UniqueNamePositions = 256;
+
+    private static string SuffixDraw(string serviceName, int revision, int position, int attempt) => SafeEncode(
+        attempt == 0 ? $"{serviceName}|{revision}|{position}" : $"{serviceName}|{revision}|{position}|{attempt}",
+        SuffixLength);
+
+    /// <summary>
+    /// Suffixes for positions 1..count, unique by construction.
+    ///
+    /// Five characters from 27 is about 14 million names, so two pods of one
+    /// service can draw the same one, and with the pool keyed on the name they
+    /// would silently become one pod. Kubernetes retries a taken name; this does the
+    /// same, deterministically: positions are assigned in order, and a suffix taken
+    /// by a lower position is redrawn with an attempt counter until it is free.
+    /// Lower positions never depend on higher ones, so scaling up keeps every
+    /// existing name. <paramref name="candidate"/> is (position, attempt) to suffix,
+    /// and is a parameter so a test can force a collision.
+    /// </summary>
+    public static IReadOnlyList<string> AssignSuffixes(int count, Func<int, int, string> candidate)
+    {
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var suffixes = new string[count];
+        for (var n = 1; n <= count; n++)
+        {
+            var attempt = 0;
+            var suffix = candidate(n, attempt);
+            while (!taken.Add(suffix)) suffix = candidate(n, ++attempt);
+            suffixes[n - 1] = suffix;
+        }
+
+        return suffixes;
     }
 
     /// <summary>The ReplicaSet part of every pod name for one service at one revision.</summary>
