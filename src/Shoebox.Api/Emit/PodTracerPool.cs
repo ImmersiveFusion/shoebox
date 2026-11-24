@@ -49,7 +49,7 @@ public sealed class PodTracerPool : IDisposable
             // produce the same one; the key carries the service anyway, so that a
             // future change to the name format cannot quietly merge two pods.
             var source = new ActivitySource(key.InstanceId);
-            var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
+            var provider = BuildProvider(key.Service, key.InstanceId, source.Name, revision);
             lock (_gate)
             {
                 _providers.Add(provider);
@@ -59,10 +59,23 @@ public sealed class PodTracerPool : IDisposable
         });
     }
 
-    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName)
+    /// <summary>
+    /// The Resource one pod exports under, or null when that pod has not emitted yet.
+    /// Resource attributes (service.name, service.version, service.instance.id) ride
+    /// the export, not the span, so this is the only place they can be read back.
+    /// </summary>
+    public Resource? ResourceOf(string serviceName, int instance, int? revision = null)
+    {
+        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
+        return _resources.TryGetValue((serviceName, instanceId), out var resource) ? resource : null;
+    }
+
+    private readonly ConcurrentDictionary<(string Service, string InstanceId), Resource> _resources = new();
+
+    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName, int? revision)
     {
         var resource = ResourceBuilder.CreateDefault()
-            .AddService(serviceName)
+            .AddService(serviceName, serviceVersion: Pod.VersionOf(revision))
             .AddAttributes(new KeyValuePair<string, object>[]
             {
                 new("service.instance.id", instanceId),
@@ -87,7 +100,9 @@ public sealed class PodTracerPool : IDisposable
             });
         }
 
-        return builder.Build();
+        var provider = builder.Build();
+        _resources[(serviceName, instanceId)] = provider.GetResource();
+        return provider;
     }
 
     public void Dispose()

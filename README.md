@@ -158,6 +158,42 @@ steps: `api[Orders API x2 rev1]`, then `x4 rev1`, then `x2 rev1` (scaling, names
 kept), then the two-node overlap above, then `api[Orders API x2 rev2]` alone (every
 old pod gone).
 
+Every pod also reports a `service.version`, read off the same marker: `1.0.0` with
+no marker, `1.2.0` for `rev2`. A redeploy is a new release, so a backend that keeps
+version history shows each bump as one, and the same diagram always reports the same
+versions.
+
+**A relabel is a rename.** A call from one service to another is two spans, as in a
+real system: a CLIENT span under the caller naming the host it dialled
+(`server.address`, `server.port`), and a SERVER span under the callee, its child,
+answering on the same host with an `http.route`. The entry service's SERVER span
+carries its host too. The host comes from the node id, never the label, the way a
+Kubernetes Service keeps its DNS name: node `api` answers on
+`api.default.svc.cluster.local`, route `/api`. An id that is not already a DNS label
+(`Api`, `order_api`) is lowercased and given a short suffix hashed from the id as
+written, so two ids never share a host.
+
+So keep the id and change the label, and the service is renamed: the old
+`service.name` goes quiet, a new one starts on the same address, with the same callers
+and the same dependencies, and nothing else in the trace changes.
+
+```mermaid
+flowchart LR
+  web[Storefront] --> api[Orders API x2]
+```
+
+then, while firing on a timer, edit it to:
+
+```mermaid
+flowchart LR
+  web[Storefront] --> api[Orders Service x2]
+```
+
+A backend that recognises a renamed service by its callers can only do that for a
+service something calls, so rename a called service, not the entry point. Datastores,
+caches, third parties and queues are named by their labels as before, and a call that
+fails outright (`broken`) is emitted as before, with no address.
+
 **A cycle is an architecture, not a mistake.** Draw a pub/sub topic with arrows
 going both ways — `accounting --> topic` and `topic --> accounting` — and a request
 can arrive back where it started. Shoebox runs it. A trace is a tree and a topology
@@ -192,7 +228,7 @@ destination called `orders-created`. Worth knowing before you paste a real desti
 and go looking for it in your backend.
 
 Each simulated pod gets its own `TracerProvider` with a Resource carrying
-`service.name`, and its own `ActivitySource`. That is the same pattern
+`service.name`, `service.version` and `service.instance.id`, and its own `ActivitySource`. That is the same pattern
 [Snowglobe](https://github.com/ImmersiveFusion/snowglobe) runs at 28 services and
 59 pods, so the shape of the output is proven rather than invented here.
 

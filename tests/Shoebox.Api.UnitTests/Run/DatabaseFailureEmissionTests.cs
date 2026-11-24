@@ -149,7 +149,10 @@ flowchart LR
             const string why = "Invalid column name 'Discount'.";
             foreach (var name in new[] { "gateway", "orders-api" })
             {
-                foreach (var span in spans.Where(s => s.Source.Name.Contains(name)))
+                // Gateway's call to the stock branch is its own CLIENT span, and that
+                // call succeeded; it is checked with the sibling branch below.
+                foreach (var span in spans.Where(s => s.Source.Name.Contains(name)
+                                                      && !Equals(s.GetTagItem("server.address"), Pod.HostOf("stock"))))
                 {
                     span.Status.Should().Be(ActivityStatusCode.Error, $"{span.DisplayName} is above the failure");
                     span.StatusDescription.Should().Be(why);
@@ -159,6 +162,8 @@ flowchart LR
             spans.Should().Contain(s => s.Source.Name.Contains("gateway") && s.Kind == ActivityKind.Server);
             spans.Where(s => s.Source.Name.Contains("stock-api")).Should().HaveCount(2)
                 .And.OnlyContain(s => s.Status == ActivityStatusCode.Unset, "the sibling branch did nothing wrong");
+            spans.Single(s => Equals(s.GetTagItem("server.address"), Pod.HostOf("stock")) && s.Kind == ActivityKind.Client)
+                .Status.Should().Be(ActivityStatusCode.Unset, "gateway's call into the sibling branch succeeded");
         }
 
         [Test]
@@ -210,7 +215,7 @@ flowchart LR
             healthy.GetTagItem("db.query.text").Should().Be("SELECT Id, Status, Total FROM dbo.Billing WHERE Id = @Id");
             healthy.GetTagItem("db.response.status_code").Should().BeNull();
 
-            spans.Single(s => s.Source.Name.Contains("billing-api") && s.Kind == ActivityKind.Client && s != healthy)
+            spans.Single(s => s.Source.Name.Contains("billing-api") && s.Kind == ActivityKind.Server)
                 .Status.Should().Be(ActivityStatusCode.Unset, "billing's own span did nothing wrong");
             spans.Single(s => s.Source.Name.Contains("orders-api") && s.GetTagItem("db.system.name") is null)
                 .Status.Should().Be(ActivityStatusCode.Error);

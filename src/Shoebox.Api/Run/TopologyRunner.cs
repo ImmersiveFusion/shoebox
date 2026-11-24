@@ -245,9 +245,16 @@ public sealed class TopologyRunner
         // cosmetic: anything inferring topology from messaging looks for a
         // producer and a consumer on the same destination, and a CLIENT span
         // carrying no operation type pairs with nothing.
+        //
+        // A service reached any other way is answering a request, so its span is
+        // SERVER, whether it is the entry point or was called by another service.
+        // A called service used to emit a CLIENT span under its own name, which
+        // claimed it was calling something when it was being called, and left it
+        // with no SERVER span to say where it answers. The call itself is now the
+        // caller's CLIENT span; see CallService.
         var kind = via is not null
             ? ActivityKind.Consumer
-            : pod.Kind == PodKind.Service && parent is null ? ActivityKind.Server : ActivityKind.Client;
+            : pod.Kind == PodKind.Service ? ActivityKind.Server : ActivityKind.Client;
 
         var start = state.Clock;
         using var activity = source.StartActivity(
@@ -353,7 +360,7 @@ public sealed class TopologyRunner
                 }
 
                 state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                if (Visit(graph, target, activity, state, depth + 1) is { } phantomWhy) Fail(phantomWhy);
+                if (CallService(graph, pod, instance, target, activity, state, depth) is { } phantomWhy) Fail(phantomWhy);
                 state.Leave(target.Id);
                 continue;
             }
@@ -419,13 +426,80 @@ public sealed class TopologyRunner
             }
 
             state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-            if (Visit(graph, target, activity, state, depth + 1) is { } why) Fail(why);
+            if (CallService(graph, pod, instance, target, activity, state, depth) is { } why) Fail(why);
             state.Leave(target.Id);
         }
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
         return failure;
     }
+
+    /// <summary>
+    /// A synchronous call from one service to another, as both sides record it.
+    ///
+    /// The caller emits a CLIENT span naming where it dialled (<c>server.address</c>
+    /// and <c>server.port</c>), and the callee answers with a SERVER span, its child,
+    /// naming the same address. That pair is how a real trace shows one service
+    /// calling another, and it is the only shape from which anything reading the
+    /// telemetry can learn where a service answers: a SERVER span's own
+    /// <c>server.address</c>, matched to the host its caller dialled.
+    ///
+    /// The address is the callee's node id (<see cref="Pod.Host"/>), so it survives a
+    /// relabel. The earlier attempt at an address put <c>{service}.internal</c> on
+    /// the service's own span with no SERVER span answering on it, so every service
+    /// read as a peer nobody had seen. Here the dialled host and the answering host
+    /// are one value, written by both sides of the same call.
+    /// </summary>
+    /// <returns>The callee's failure, so the caller fails with it. Null when it did not fail.</returns>
+    private string? CallService(Graph graph, Pod caller, int callerInstance, Pod callee, Activity? parent, RunState state, int depth)
+    {
+        var source = _pool.For(caller.ServiceName, callerInstance, caller.Revision);
+        using var client = source.StartActivity(
+            "GET",
+            ActivityKind.Client,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        if (client is not null)
+        {
+            state.SpanCount++;
+            client.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
+            client.SetTag("service.instance.id", caller.InstanceId(callerInstance));
+            client.SetTag("shoebox.pod.kind", callee.Kind.ToString().ToLowerInvariant());
+            client.SetTag("http.request.method", "GET");
+            client.SetTag("server.address", callee.Host);
+            client.SetTag("server.port", Pod.ServicePort);
+            client.SetTag("url.full", $"http://{callee.Host}:{Pod.ServicePort}{Route(callee)}");
+        }
+
+        var why = Visit(graph, callee, client, state, depth + 1);
+        if (client is not null)
+        {
+            // The caller saw what the callee answered. A 500 from the far side is an
+            // error on this span too, with the callee's words.
+            if (why is not null)
+            {
+                client.SetStatus(ActivityStatusCode.Error, why);
+                client.SetTag("http.response.status_code", 500);
+                client.SetTag("error.type", "500");
+            }
+            else
+            {
+                client.SetTag("http.response.status_code", 200);
+            }
+
+            client.SetEndTime(state.Clock.UtcDateTime);
+        }
+
+        return why;
+    }
+
+    /// <summary>
+    /// The route a service answers on, from its node id like its address, so a
+    /// relabel leaves the API where it was: renaming a service does not move its
+    /// endpoints.
+    /// </summary>
+    private static string Route(Pod pod) => $"/{pod.Host.Split('.')[0]}";
 
     /// <summary>
     /// The publish, and whatever picks it up.
@@ -748,9 +822,17 @@ public sealed class TopologyRunner
                 // outbound call; this span is the pod itself, and the pod is not
                 // its own peer. Naming a host that does not exist is the same
                 // fabrication as naming an attribute that does not exist.
+                //
+                // The SERVER span is the other case: it is the far end, and it says
+                // where it answers. That is server.address on a SERVER span as the
+                // HTTP server conventions define it, and the same host its caller
+                // dialled (see CallService), so the two agree rather than inventing
+                // a peer.
                 if (kind == ActivityKind.Server)
                 {
-                    yield return new("http.route", $"/{pod.ServiceName}");
+                    yield return new("http.route", Route(pod));
+                    yield return new("server.address", pod.Host);
+                    yield return new("server.port", Pod.ServicePort);
                 }
 
                 break;

@@ -42,6 +42,72 @@ public sealed record Pod(
     /// <summary>The service.instance.id of the pod at one position, 1-based.</summary>
     public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Revision);
 
+    /// <summary>
+    /// The address a service answers on: <c>server.address</c> on its own SERVER spans
+    /// and on its callers' CLIENT spans.
+    ///
+    /// It comes from the node id, never the label, so relabelling a node renames the
+    /// service and keeps its address, the way a Kubernetes Service keeps its DNS name
+    /// when the Deployment behind it is renamed. That is what makes a relabel a real
+    /// rename to anything that recognises a service by where it answers: the old
+    /// name goes quiet, a new name starts on the same address, with the same callers
+    /// and the same dependencies.
+    /// </summary>
+    public string Host => HostOf(Id);
+
+    /// <summary>The port every simulated service listens on.</summary>
+    public const int ServicePort = 8080;
+
+    /// <summary>
+    /// A Kubernetes Service DNS name for a node id: <c>{id}.default.svc.cluster.local</c>.
+    ///
+    /// A DNS label is lowercase letters, digits and hyphens. An id that fits already
+    /// is used as it is. Any other id is reduced to one and given a short suffix
+    /// hashed from the id as written, because Mermaid ids are case sensitive and
+    /// <c>Api</c> and <c>api</c> are two nodes; folding them onto one host would
+    /// make two services one address, which is exactly the false rename this exists
+    /// to avoid.
+    /// </summary>
+    public static string HostOf(string nodeId)
+    {
+        var label = DnsLabel(nodeId);
+        if (!string.Equals(label, nodeId, StringComparison.Ordinal))
+        {
+            label = $"{label}-{SafeEncode($"host|{nodeId}", HostSuffixLength)}";
+        }
+
+        return $"{label}.default.svc.cluster.local";
+    }
+
+    private const int HostSuffixLength = 5;
+
+    private const int MaxDnsLabel = 63 - HostSuffixLength - 1;
+
+    private static string DnsLabel(string nodeId)
+    {
+        var chars = nodeId.ToLowerInvariant()
+            .Select(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' ? c : '-')
+            .ToArray();
+        var label = new string(chars);
+        while (label.Contains("--", StringComparison.Ordinal)) label = label.Replace("--", "-", StringComparison.Ordinal);
+        label = label.Trim('-');
+        if (label.Length > MaxDnsLabel) label = label[..MaxDnsLabel].TrimEnd('-');
+        return label.Length == 0 ? "svc" : label;
+    }
+
+    /// <summary>
+    /// The release this pod runs, as <c>service.version</c>: <c>1.{rev}.0</c>, and
+    /// <c>1.0.0</c> with no rev marker.
+    ///
+    /// A rev marker already means a redeploy that replaced every pod, so it is also a
+    /// new release, and a version history read from the telemetry shows each bump as
+    /// one. Derived rather than typed, so every diagram has a version without
+    /// learning another marker, and the same diagram always reports the same one.
+    /// </summary>
+    public string ServiceVersion => VersionOf(Revision);
+
+    public static string VersionOf(int? revision) => $"1.{revision ?? 0}.0";
+
     /// <summary>Every pod name this node can serve from, in position order.</summary>
     public IReadOnlyList<string> InstanceIds =>
         PinnedInstance is { } pinned
