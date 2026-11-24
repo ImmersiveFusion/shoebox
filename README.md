@@ -167,7 +167,7 @@ one, and the same diagram always reports the same versions.
 real system: a CLIENT span under the caller naming the host it dialled, and a SERVER
 span under the callee, its child, answering on the same host. The entry service's
 SERVER span carries its host too. Each carries the HTTP attributes its kind requires
-or recommends in the OpenTelemetry conventions, and nothing else:
+or recommends in the OpenTelemetry conventions:
 
 | Span | Attributes |
 |---|---|
