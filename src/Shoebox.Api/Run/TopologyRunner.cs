@@ -70,7 +70,7 @@ public sealed class TopologyRunner
                 Array.Empty<Hop>(), Unreached(graph.Calls));
         }
 
-        if (!string.IsNullOrWhiteSpace(shoeboxId))
+        if (!string.IsNullOrEmpty(shoeboxId))
         {
             // shoebox.id rides Baggage onto every span, which is also a live
             // demonstration of baggage propagation inside a tool whose job is
@@ -91,7 +91,7 @@ public sealed class TopologyRunner
         // too and not just in the picture.
         var ambient = Activity.Current;
         Activity.Current = null;
-        var state = new RunState(runIndex);
+        var state = new RunState(runIndex) { Namespace = Pod.NamespaceOf(shoeboxId) };
         try
         {
             // The entry pod is on the path before the walk starts, or a diagram
@@ -145,9 +145,48 @@ public sealed class TopologyRunner
         var accounted = new HashSet<string>(crossed, StringComparer.Ordinal);
         foreach (var edge in declined) accounted.Add($"{edge.From}->{edge.To}");
 
+        var rest = graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}")).ToList();
+        if (state.CutEdges.Count == 0)
+        {
+            return declined.Concat(Unreached(rest)).ToList();
+        }
+
+        // A run cut at a limit did not walk everything it could reach, and saying
+        // "no path arrives" about those edges would be false. So the edges a limit
+        // actually stopped are named as such, and so are the edges behind them
+        // that the run never got to. Nothing else changes: an edge the walk
+        // reached and did not take for its own reasons (a broken call's far side,
+        // a phantom consumer) is reported exactly as in an uncut run, because the
+        // limit had nothing to do with it.
+        var behind = Behind(graph, state);
+        const string behindReason = "not walked: it lies behind an edge the run stopped at, at a limit";
+
         return declined
-            .Concat(Unreached(graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}"))))
+            .Concat(rest.Select(c =>
+                state.CutEdges.TryGetValue($"{c.FromId}->{c.ToId}", out var why) ? new NotTaken(c.FromId, c.ToId, why)
+                : behind.Contains(c.FromId) ? new NotTaken(c.FromId, c.ToId, behindReason)
+                : null)
+                .OfType<NotTaken>())
+            .Concat(Unreached(rest.Where(c => !state.CutEdges.ContainsKey($"{c.FromId}->{c.ToId}") && !behind.Contains(c.FromId))))
             .ToList();
+    }
+
+    /// <summary>
+    /// Pods the run never entered that lie past an edge a limit stopped: what the
+    /// cut kept the request from, as opposed to what it never would have reached.
+    /// </summary>
+    private static HashSet<string> Behind(Graph graph, RunState state)
+    {
+        var behind = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>(state.CutEdges.Keys.Select(k => k[(k.IndexOf("->", StringComparison.Ordinal) + 2)..]));
+        while (pending.Count > 0)
+        {
+            var id = pending.Pop();
+            if (state.Visited.Contains(id) || !behind.Add(id)) continue;
+            foreach (var call in graph.From(id)) pending.Push(call.ToId);
+        }
+
+        return behind;
     }
 
     /// <summary>
@@ -216,23 +255,22 @@ public sealed class TopologyRunner
         // reached and never would have been.
         if (state.Exhausted)
         {
-            state.NoteOnce(
-                $"Walk stopped at {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
-                "the request kept arriving back where it started and this run is a truncated " +
-                "prefix of an unbounded one rather than a picture of the system. " +
-                "Nothing below this point ran, and the hops and timings above it are still real.");
+            state.NoteOnce(BudgetNote(graph));
+            state.CutAll(graph.From(pod.Id), budget: true);
             return null;
         }
 
         if (depth > RunLimits.MaxDepth)
         {
+            state.CutAll(graph.From(pod.Id), budget: false);
             // NoteOnce, not Note. This fired on every branch that reached the
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
-            state.NoteOnce($"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle.");
+            state.NoteOnce(DepthNote(graph));
             return null;
         }
 
+        state.Visited.Add(pod.Id);
         var instance = SelectInstance(pod, state.RunIndex);
         var source = _pool.For(pod.ServiceName, instance, pod.Revision);
 
@@ -245,9 +283,15 @@ public sealed class TopologyRunner
         // cosmetic: anything inferring topology from messaging looks for a
         // producer and a consumer on the same destination, and a CLIENT span
         // carrying no operation type pairs with nothing.
+        //
+        // A service reached any other way is answering a request, so its span is
+        // SERVER, whether it is the entry point or was called by another service.
+        // A CLIENT span under the callee's own name would claim it was calling
+        // something while it was being called, and leave nothing to say where it
+        // answers. The call itself is the caller's CLIENT span; see CallService.
         var kind = via is not null
             ? ActivityKind.Consumer
-            : pod.Kind == PodKind.Service && parent is null ? ActivityKind.Server : ActivityKind.Client;
+            : pod.Kind == PodKind.Service ? ActivityKind.Server : ActivityKind.Client;
 
         var start = state.Clock;
         using var activity = source.StartActivity(
@@ -282,7 +326,7 @@ public sealed class TopologyRunner
             }
             else
             {
-                foreach (var (k, v) in SemanticTags(pod, kind)) activity.SetTag(k, v);
+                foreach (var (k, v) in SemanticTags(pod, kind, host: pod.HostIn(state.Namespace))) activity.SetTag(k, v);
             }
         }
 
@@ -302,12 +346,18 @@ public sealed class TopologyRunner
             activity?.SetStatus(ActivityStatusCode.Error, failure);
         }
 
-        foreach (var call in graph.From(pod.Id))
+        var outgoing = graph.From(pod.Id).ToList();
+        for (var index = 0; index < outgoing.Count; index++)
         {
             // Checked per edge, not only on entry. A pod fanning out to six
             // consumers would otherwise spend six times the budget past the point
             // it ran out, once for every branch already inside the loop.
-            if (state.Exhausted) break;
+            var call = outgoing[index];
+            if (state.Exhausted)
+            {
+                state.CutAll(outgoing.Skip(index), budget: true);
+                break;
+            }
 
             var target = graph.ById(call.ToId);
             if (target is null) continue;
@@ -352,8 +402,7 @@ public sealed class TopologyRunner
                     continue;
                 }
 
-                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-                if (Visit(graph, target, activity, state, depth + 1) is { } phantomWhy) Fail(phantomWhy);
+                if (CallService(graph, pod, instance, target, activity, state, depth) is { } phantomWhy) Fail(phantomWhy);
                 state.Leave(target.Id);
                 continue;
             }
@@ -387,7 +436,7 @@ public sealed class TopologyRunner
                     continue;
                 }
 
-                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                // The hop is recorded inside, once the publish is known to fit.
                 PublishAndDeliver(graph, pod, target, graph.From(target.Id).ToList(), activity, state, depth, instance);
                 state.Leave(target.Id);
                 continue;
@@ -418,14 +467,139 @@ public sealed class TopologyRunner
                 continue;
             }
 
-            state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
-            if (Visit(graph, target, activity, state, depth + 1) is { } why) Fail(why);
+            if (CallService(graph, pod, instance, target, activity, state, depth) is { } why) Fail(why);
             state.Leave(target.Id);
         }
+
+        // A server says what it answered, as its caller's CLIENT span does, so the
+        // two halves of a call agree on the outcome from either side.
+        if (kind == ActivityKind.Server) activity?.SetTag("http.response.status_code", failure is null ? 200 : 500);
 
         activity?.SetEndTime(state.Clock.UtcDateTime);
         return failure;
     }
+
+    /// <summary>
+    /// A synchronous call from one service to another, as both sides record it.
+    ///
+    /// The caller emits a CLIENT span naming where it dialled (<c>server.address</c>
+    /// and <c>server.port</c>), and the callee answers with a SERVER span, its child,
+    /// naming the same address. That pair is how a real trace shows one service
+    /// calling another, and it is the only shape from which anything reading the
+    /// telemetry can learn where a service answers: a SERVER span's own
+    /// <c>server.address</c>, matched to the host its caller dialled.
+    ///
+    /// The address is the callee's node id in this shoebox's namespace (<see cref="Pod.HostIn"/>), so it survives a
+    /// relabel. The dialled host and the answering host are one value, written by
+    /// both sides of the same call, so no address appears that nothing answers on:
+    /// an address with no answer reads as a peer nobody has seen.
+    /// </summary>
+    /// <returns>The callee's failure, so the caller fails with it. Null when it did not fail.</returns>
+    private string? CallService(Graph graph, Pod caller, int callerInstance, Pod callee, Activity? parent, RunState state, int depth)
+    {
+        // A call is two spans, and both fit or neither is emitted. With one slot
+        // left, the CLIENT half alone would be a call dialling a host nothing
+        // answers on, which is exactly what reads as a peer nobody has seen. So the
+        // walk stops here, as it does at the budget itself.
+        //
+        // Stopping, not skipping only this call: a skip leaves the count at 499,
+        // where the budget never trips, and the walk then keeps visiting every
+        // remaining edge of a diagram anybody can paste. A one-span sibling that
+        // would still have fit is the price of a walk that is bounded.
+        if (RunLimits.MaxSpans - state.SpanCount < 2)
+        {
+            state.Stop();
+            state.Cut(caller.Id, callee.Id, budget: true);
+            state.NoteOnce(BudgetNote(graph));
+            return null;
+        }
+
+        // The depth limit is the same case: past it the callee would never answer,
+        // so the call is not emitted either.
+        if (depth + 1 > RunLimits.MaxDepth)
+        {
+            state.Cut(caller.Id, callee.Id, budget: false);
+            state.NoteOnce(DepthNote(graph));
+            return null;
+        }
+
+        // Recorded here, after both limits, so a hop is only ever a call the walk
+        // made in full: the client replays hops as the path the request took. A
+        // hop does not depend on sampling, any more than the run does.
+        state.Hop(caller.Id, callee.Id, failed: false, ms: callee.DefaultLatencyMs);
+
+        var source = _pool.For(caller.ServiceName, callerInstance, caller.Revision);
+        using var client = source.StartActivity(
+            "GET",
+            ActivityKind.Client,
+            parent?.Context ?? default,
+            startTime: state.Clock);
+
+        if (client is not null)
+        {
+            state.SpanCount++;
+            client.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
+            client.SetTag("service.instance.id", caller.InstanceId(callerInstance));
+            // On a CLIENT span this names what was called, as it does on the
+            // dependency calls (EmitDependencyCall); on a pod's own span it names the pod.
+            client.SetTag("shoebox.pod.kind", callee.Kind.ToString().ToLowerInvariant());
+            client.SetTag("http.request.method", "GET");
+            var host = callee.HostIn(state.Namespace);
+            client.SetTag("server.address", host);
+            client.SetTag("server.port", Pod.ServicePort);
+            client.SetTag("url.full", $"http://{host}:{Pod.ServicePort}{callee.Route}");
+        }
+
+        // DeclaredFullSampler records every span, so client is not null in practice;
+        // this guards it like every other span in this walk. If it ever were, the
+        // callee would hang where the CLIENT span would have, under the caller's
+        // own span, which every service call has: Visit always passes its own.
+        var why = Visit(graph, callee, client ?? parent, state, depth + 1);
+        if (client is not null)
+        {
+            // The caller saw what the callee answered. A 500 from the far side is an
+            // error on this span too, with the callee's words.
+            if (why is not null)
+            {
+                client.SetStatus(ActivityStatusCode.Error, why);
+                client.SetTag("http.response.status_code", 500);
+                client.SetTag("error.type", "500");
+            }
+            else
+            {
+                client.SetTag("http.response.status_code", 200);
+            }
+
+            client.SetEndTime(state.Clock.UtcDateTime);
+        }
+
+        return why;
+    }
+
+    /// <summary>
+    /// Why the walk stopped at the depth limit. A cycle only where there is one: a
+    /// long acyclic chain reaches the limit too, and blaming a loop it does not have
+    /// misleads.
+    /// </summary>
+    private static string DepthNote(Graph graph) => graph.CyclicPods.Count > 0
+        ? $"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle."
+        : $"Walk stopped at depth {RunLimits.MaxDepth}: this chain of calls is longer than a run follows, and nothing past that depth ran.";
+
+    /// <summary>
+    /// Why the walk stopped short of the diagram, said once per run.
+    ///
+    /// The cycle explanation only where there is a cycle. A large acyclic diagram
+    /// can reach the budget too, and blaming a loop it does not have sends the
+    /// person looking for the wrong thing.
+    /// </summary>
+    private static string BudgetNote(Graph graph) => graph.CyclicPods.Count > 0
+        ? $"Walk stopped at its budget of {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
+          "the request kept arriving back where it started and this run is a truncated " +
+          "prefix of an unbounded one rather than a picture of the system. " +
+          "Nothing below this point ran, and the hops and timings above it are still real."
+        : $"Walk stopped at its budget of {RunLimits.MaxSpans} spans. One request through this diagram " +
+          "makes more spans than a run emits, so this run is a truncated prefix of it. " +
+          "Nothing below this point ran, and the hops and timings above it are still real.";
 
     /// <summary>
     /// The publish, and whatever picks it up.
@@ -442,6 +616,31 @@ public sealed class TopologyRunner
         // Deterministic: the same diagram and run index produce the same id, so a
         // shared link is still a runnable repro.
         var messageId = $"{queue.ServiceName}-{state.RunIndex}";
+
+        // The same whole-step rule as a call between services. A queue with a
+        // consumer drawn is published and received together or not at all: cut
+        // between the two, the run would end on a publish nothing received, which
+        // reads as an unconsumed destination, a phantom the diagram does not have.
+        // A queue drawn with no consumer is the publish alone and needs one span.
+        if (consumers.Count > 0)
+        {
+            if (RunLimits.MaxSpans - state.SpanCount < 2)
+            {
+                state.Stop();
+                state.Cut(producer.Id, queue.Id, budget: true);
+                state.NoteOnce(BudgetNote(graph));
+                return;
+            }
+
+            if (depth + 1 > RunLimits.MaxDepth)
+            {
+                state.Cut(producer.Id, queue.Id, budget: false);
+                state.NoteOnce(DepthNote(graph));
+                return;
+            }
+        }
+
+        state.Hop(producer.Id, queue.Id, failed: false, ms: queue.DefaultLatencyMs);
 
         var source = _pool.For(producer.ServiceName, instance, producer.Revision);
         using var publish = source.StartActivity(
@@ -467,7 +666,11 @@ public sealed class TopologyRunner
 
         foreach (var call in consumers)
         {
-            if (state.Exhausted) break;
+            if (state.Exhausted)
+            {
+                state.CutAll(consumers.SkipWhile(c => !ReferenceEquals(c, call)), budget: true);
+                break;
+            }
 
             var consumer = graph.ById(call.ToId);
             if (consumer is null) continue;
@@ -697,7 +900,7 @@ public sealed class TopologyRunner
     /// a convention to get semantically correct telemetry out.
     /// </summary>
     private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(
-        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null)
+        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null, string? host = null)
     {
         yield return new("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
 
@@ -741,16 +944,19 @@ public sealed class TopologyRunner
                 // http.route is a SERVER-span attribute and appears nowhere in the
                 // client table, so it is conditional on kind.
                 //
-                // And nothing else. A previous attempt put server.address here as
-                // "{service}.internal", which invented a hostname that nothing
-                // ever emits under, so every internal service in the diagram was
-                // inferred as a phantom peer. server.* describes the far end of an
-                // outbound call; this span is the pod itself, and the pod is not
-                // its own peer. Naming a host that does not exist is the same
-                // fabrication as naming an attribute that does not exist.
+                // So is server.address. On a SERVER span it is where this service
+                // answers, as the HTTP server conventions define it, and it is the
+                // same host its caller dialled (see CallService), so the two halves
+                // of a call agree. Any other span of a pod is not a call to a peer,
+                // and a host on it would name a peer that nothing answers for:
+                // exactly the phantom an inference engine would report.
                 if (kind == ActivityKind.Server)
                 {
-                    yield return new("http.route", $"/{pod.ServiceName}");
+                    yield return new("http.route", pod.Route);
+                    // Required, never defaulted: a SERVER span in the wrong namespace
+                    // answers on a host its caller did not dial.
+                    yield return new("server.address", host ?? throw new ArgumentNullException(nameof(host), "A SERVER span needs the host its caller dialled."));
+                    yield return new("server.port", Pod.ServicePort);
                 }
 
                 break;
@@ -760,6 +966,9 @@ public sealed class TopologyRunner
     private sealed class RunState(int runIndex)
     {
         public int RunIndex { get; } = runIndex;
+
+        /// <summary>The shoebox's namespace, so its services answer on addresses of their own.</summary>
+        public string Namespace { get; init; } = Pod.DefaultNamespace;
 
         /// <summary>Modelled time, not wall clock. Advanced by each pod's latency.</summary>
         public DateTimeOffset Clock { get; set; } = DateTimeOffset.UtcNow;
@@ -791,7 +1000,34 @@ public sealed class TopologyRunner
         /// Whether this run has spent its span budget. See <see cref="RunLimits"/>
         /// for why the budget rather than the depth limit is the real bound.
         /// </summary>
-        public bool Exhausted => SpanCount >= RunLimits.MaxSpans;
+        public bool Exhausted => _stopped || SpanCount >= RunLimits.MaxSpans;
+
+        private bool _stopped;
+
+        /// <summary>
+        /// Ends the walk when what is left of the budget cannot hold the next whole
+        /// call, so every loop that checks <see cref="Exhausted"/> stops too.
+        /// </summary>
+        public void Stop() => _stopped = true;
+
+        /// <summary>
+        /// The edges a limit stopped the walk at, keyed <c>from->to</c>, with why.
+        /// Only these, and what lies behind them, are "not walked".
+        /// </summary>
+        public Dictionary<string, string> CutEdges { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Pods the walk entered, on any path.</summary>
+        public HashSet<string> Visited { get; } = new(StringComparer.Ordinal);
+
+        public void Cut(string from, string to, bool budget) =>
+            CutEdges.TryAdd($"{from}->{to}", budget
+                ? $"not walked: the run stopped at its budget of {RunLimits.MaxSpans} spans before taking this edge"
+                : $"not walked: the run stopped at depth {RunLimits.MaxDepth} before taking this edge");
+
+        public void CutAll(IEnumerable<Call> calls, bool budget)
+        {
+            foreach (var call in calls) Cut(call.FromId, call.ToId, budget);
+        }
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and

@@ -147,9 +147,16 @@ flowchart LR
   stock --> sdb[(Stock SQL Server)]");
 
             const string why = "Invalid column name 'Discount'.";
+
+            // Gateway's call into the stock branch is its own CLIENT span: the one
+            // whose child is stock's SERVER span. That call succeeded, and it is
+            // checked with the sibling branch below.
+            var stockServer = spans.Single(s => s.Source.Name.Contains("stock-api") && s.Kind == ActivityKind.Server);
+            var callIntoStock = spans.Single(s => s.SpanId == stockServer.ParentSpanId);
+
             foreach (var name in new[] { "gateway", "orders-api" })
             {
-                foreach (var span in spans.Where(s => s.Source.Name.Contains(name)))
+                foreach (var span in spans.Where(s => s.Source.Name.Contains(name) && s != callIntoStock))
                 {
                     span.Status.Should().Be(ActivityStatusCode.Error, $"{span.DisplayName} is above the failure");
                     span.StatusDescription.Should().Be(why);
@@ -159,6 +166,9 @@ flowchart LR
             spans.Should().Contain(s => s.Source.Name.Contains("gateway") && s.Kind == ActivityKind.Server);
             spans.Where(s => s.Source.Name.Contains("stock-api")).Should().HaveCount(2)
                 .And.OnlyContain(s => s.Status == ActivityStatusCode.Unset, "the sibling branch did nothing wrong");
+            callIntoStock.Kind.Should().Be(ActivityKind.Client);
+            callIntoStock.Source.Name.Should().Contain("gateway");
+            callIntoStock.Status.Should().Be(ActivityStatusCode.Unset, "gateway's call into the sibling branch succeeded");
         }
 
         [Test]
@@ -210,7 +220,7 @@ flowchart LR
             healthy.GetTagItem("db.query.text").Should().Be("SELECT Id, Status, Total FROM dbo.Billing WHERE Id = @Id");
             healthy.GetTagItem("db.response.status_code").Should().BeNull();
 
-            spans.Single(s => s.Source.Name.Contains("billing-api") && s.Kind == ActivityKind.Client && s != healthy)
+            spans.Single(s => s.Source.Name.Contains("billing-api") && s.Kind == ActivityKind.Server)
                 .Status.Should().Be(ActivityStatusCode.Unset, "billing's own span did nothing wrong");
             spans.Single(s => s.Source.Name.Contains("orders-api") && s.GetTagItem("db.system.name") is null)
                 .Status.Should().Be(ActivityStatusCode.Error);

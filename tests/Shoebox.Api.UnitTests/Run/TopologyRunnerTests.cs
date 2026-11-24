@@ -101,7 +101,8 @@ flowchart LR
             var result = Fire(diagram, 1);
 
             result.FailedSpanCount.Should().Be(0);
-            result.SpanCount.Should().Be(3);
+            // gateway SERVER, gateway's CLIENT call to orders, orders SERVER, orders' db CLIENT.
+            result.SpanCount.Should().Be(4);
         }
 
         [Test]

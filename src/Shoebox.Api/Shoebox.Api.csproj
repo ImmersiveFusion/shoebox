@@ -37,6 +37,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Resource attributes ride the export, not the span, so tests read them back
+         through an internal accessor rather than a public API nothing else needs. -->
+    <InternalsVisibleTo Include="Shoebox.Api.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Folder Include="wwwroot\" />
   </ItemGroup>
 

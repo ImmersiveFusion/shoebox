@@ -22,10 +22,18 @@ namespace Shoebox.Api.Emit;
 /// </summary>
 public sealed class PodTracerPool : IDisposable
 {
-    private readonly ConcurrentDictionary<(string Service, string InstanceId), ActivitySource> _sources = new();
-    private readonly List<TracerProvider> _providers = new();
-    private readonly object _gate = new();
+    /// <summary>
+    /// One entry per pod: its source and the provider that exports it, built once.
+    ///
+    /// Lazy, because <c>GetOrAdd</c> may run its factory more than once under a race
+    /// and keep only one result; building the provider inside the factory leaked the
+    /// loser, a whole TracerProvider with its exporter. The Lazy is cheap to lose,
+    /// and only the one that is kept is ever built.
+    /// </summary>
+    private readonly ConcurrentDictionary<(string Service, string InstanceId), Lazy<PodEmitter>> _pods = new();
     private readonly string _hostName = Environment.MachineName;
+
+    private sealed record PodEmitter(ActivitySource Source, TracerProvider Provider);
     private readonly OtlpTarget? _target;
 
     public PodTracerPool(OtlpTarget? target) => _target = target;
@@ -40,29 +48,86 @@ public sealed class PodTracerPool : IDisposable
     /// </summary>
     public ActivitySource For(string serviceName, int instance, int? revision = null)
     {
-        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
-        return _sources.GetOrAdd((serviceName, instanceId), key =>
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var key = (serviceName, Pod.InstanceIdOf(serviceName, instance, revision));
+        var pod = _pods.GetOrAdd(key, k => new Lazy<PodEmitter>(() =>
         {
             // The ActivitySource name is the instance id so each pod's provider can
             // subscribe to exactly its own spans and nobody else's. A pod name ends in
             // two fixed-length parts after the service, so two services can never
             // produce the same one; the key carries the service anyway, so that a
             // future change to the name format cannot quietly merge two pods.
-            var source = new ActivitySource(key.InstanceId);
-            var provider = BuildProvider(key.Service, key.InstanceId, source.Name);
-            lock (_gate)
+            //
+            // The revision is not in the key because it is already in the instance
+            // id: the template hash is drawn from it, so two revisions of a service
+            // are two pods, each with its own service.version.
+            Interlocked.Increment(ref _builds);
+            var source = new ActivitySource(k.Item2);
+            TracerProvider provider;
+            try
             {
-                _providers.Add(provider);
+                provider = BuildProvider(k.Item1, k.Item2, source.Name, revision);
+            }
+            catch
+            {
+                source.Dispose();
+                throw;
             }
 
-            return source;
-        });
+            // Checked again once built: a call that passed the check at the top
+            // while Dispose was running could otherwise build a pod after Dispose
+            // had already been through the pool, and nothing would ever dispose it.
+            if (_disposed)
+            {
+                provider.Dispose();
+                source.Dispose();
+                throw new ObjectDisposedException(nameof(PodTracerPool));
+            }
+
+            return new PodEmitter(source, provider);
+        }, LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return pod.Value.Source;
+        }
+        catch
+        {
+            // A Lazy keeps the exception it was built with, so a pod that failed to
+            // build once would fail on every run after. Drop it, so the next run
+            // builds it again, the way the factory did before it was made Lazy.
+            _pods.TryRemove(new KeyValuePair<(string, string), Lazy<PodEmitter>>(key, pod));
+            throw;
+        }
     }
 
-    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName)
+    private volatile bool _disposed;
+
+    private int _builds;
+
+    /// <summary>How many pod providers this pool has built, for tests that a race builds one.</summary>
+    internal int Builds => Volatile.Read(ref _builds);
+
+    /// <summary>
+    /// The Resource one pod exports under, or null when that pod has not emitted yet.
+    /// Resource attributes (service.name, service.version, service.instance.id) ride
+    /// the export, not the span, so this is the only place they can be read back.
+    /// It is read from the pod's provider (<c>GetResource()</c>), the Resource its
+    /// exporter attaches to every batch; nothing is kept for it.
+    /// </summary>
+    internal Resource? ResourceOf(string serviceName, int instance, int? revision = null)
+    {
+        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
+        return _pods.TryGetValue((serviceName, instanceId), out var pod) && pod.IsValueCreated
+            ? pod.Value.Provider.GetResource()
+            : null;
+    }
+
+    private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName, int? revision)
     {
         var resource = ResourceBuilder.CreateDefault()
-            .AddService(serviceName)
+            .AddService(serviceName, serviceVersion: Pod.VersionOf(revision))
             .AddAttributes(new KeyValuePair<string, object>[]
             {
                 new("service.instance.id", instanceId),
@@ -92,21 +157,21 @@ public sealed class PodTracerPool : IDisposable
 
     public void Dispose()
     {
-        lock (_gate)
-        {
-            foreach (var provider in _providers)
-            {
-                provider.Dispose();
-            }
+        // No new pods after this; a For racing it throws rather than building a
+        // provider nothing will dispose.
+        _disposed = true;
 
-            _providers.Clear();
+        // Providers first, so each flushes what its source emitted, then the sources.
+        foreach (var pod in _pods.Values.Where(p => p.IsValueCreated))
+        {
+            pod.Value.Provider.Dispose();
         }
 
-        foreach (var source in _sources.Values)
+        foreach (var pod in _pods.Values.Where(p => p.IsValueCreated))
         {
-            source.Dispose();
+            pod.Value.Source.Dispose();
         }
 
-        _sources.Clear();
+        _pods.Clear();
     }
 }
