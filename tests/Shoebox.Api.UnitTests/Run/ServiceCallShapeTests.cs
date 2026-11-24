@@ -439,6 +439,24 @@ flowchart LR
         }
 
         [Test]
+        public void A_Phantom_Marker_On_A_Direct_Call_Is_An_Ordinary_Answered_Call()
+        {
+            // A phantom needs a queue; on a direct edge it is ignored with a note and
+            // runs as a call. It goes through the same path as any call, so it is
+            // the same CLIENT and SERVER pair on the callee's address.
+            using var pool = new PodTracerPool(target: null);
+            var (result, spans) = Fire("flowchart LR\n  orders[Orders API] -->|phantom| pay[Payment Service]", pool);
+
+            var call = spans.Single(s => s.Kind == ActivityKind.Client);
+            call.GetTagItem("server.address").Should().Be(Pod.HostOf("pay"));
+            var answer = spans.Single(s => s.ParentSpanId == call.SpanId);
+            answer.Kind.Should().Be(ActivityKind.Server);
+            ServiceOf(answer).Should().Be("payment-service");
+            answer.GetTagItem("server.address").Should().Be(Pod.HostOf("pay"));
+            result.Hops.Should().ContainSingle(h => h.From == "orders" && h.To == "pay");
+        }
+
+        [Test]
         public void A_Server_Span_Says_What_It_Answered()
         {
             var spans = Capture(@"

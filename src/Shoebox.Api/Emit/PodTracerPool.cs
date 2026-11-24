@@ -64,6 +64,8 @@ public sealed class PodTracerPool : IDisposable
     /// The Resource one pod exports under, or null when that pod has not emitted yet.
     /// Resource attributes (service.name, service.version, service.instance.id) ride
     /// the export, not the span, so this is the only place they can be read back.
+    /// It is the provider's own Resource (<c>GetResource()</c>), the one its
+    /// exporter attaches to every batch, not a copy built separately.
     /// </summary>
     internal Resource? ResourceOf(string serviceName, int instance, int? revision = null)
     {

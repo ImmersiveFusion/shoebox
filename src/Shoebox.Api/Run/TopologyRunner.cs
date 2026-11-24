@@ -225,12 +225,7 @@ public sealed class TopologyRunner
             // NoteOnce, not Note. This fired on every branch that reached the
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
-            //
-            // And a cycle only where there is one: a long acyclic chain reaches the
-            // limit too, and blaming a loop it does not have misleads.
-            state.NoteOnce(graph.CyclicPods.Count > 0
-                ? $"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle."
-                : $"Walk stopped at depth {RunLimits.MaxDepth}: this chain of calls is longer than a run follows, and nothing past that depth ran.");
+            state.NoteOnce(DepthNote(graph));
             return null;
         }
 
@@ -466,11 +461,11 @@ public sealed class TopologyRunner
             return null;
         }
 
-        // The depth limit is the same case: past it Visit returns before the callee
-        // answers, so the call is not emitted either, and Visit notes the limit.
+        // The depth limit is the same case: past it the callee would never answer,
+        // so the call is not emitted either.
         if (depth + 1 > RunLimits.MaxDepth)
         {
-            _ = Visit(graph, callee, parent, state, depth + 1);
+            state.NoteOnce(DepthNote(graph));
             return null;
         }
 
@@ -500,8 +495,9 @@ public sealed class TopologyRunner
             client.SetTag("url.full", $"http://{callee.Host}:{Pod.ServicePort}{callee.Route}");
         }
 
-        // If the CLIENT span was not recorded, the callee hangs under the caller's
-        // own span rather than starting a trace of its own.
+        // DeclaredFullSampler records every span, so client is not null in practice;
+        // this guards it like every other span in this walk. If it ever were, the
+        // callee would hang under the caller's own span rather than start a trace.
         var why = Visit(graph, callee, client ?? parent, state, depth + 1);
         if (client is not null)
         {
@@ -523,6 +519,15 @@ public sealed class TopologyRunner
 
         return why;
     }
+
+    /// <summary>
+    /// Why the walk stopped at the depth limit. A cycle only where there is one: a
+    /// long acyclic chain reaches the limit too, and blaming a loop it does not have
+    /// misleads.
+    /// </summary>
+    private static string DepthNote(Graph graph) => graph.CyclicPods.Count > 0
+        ? $"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle."
+        : $"Walk stopped at depth {RunLimits.MaxDepth}: this chain of calls is longer than a run follows, and nothing past that depth ran.";
 
     /// <summary>
     /// Why the walk stopped short of the diagram, said once per run.
