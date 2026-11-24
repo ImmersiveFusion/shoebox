@@ -62,16 +62,30 @@ public sealed class PodTracerPool : IDisposable
             // The revision is not in the key because it is already in the instance
             // id: the template hash is drawn from it, so two revisions of a service
             // are two pods, each with its own service.version.
+            Interlocked.Increment(ref _builds);
             var source = new ActivitySource(k.Item2);
+            TracerProvider provider;
             try
             {
-                return new PodEmitter(source, BuildProvider(k.Item1, k.Item2, source.Name, revision));
+                provider = BuildProvider(k.Item1, k.Item2, source.Name, revision);
             }
             catch
             {
                 source.Dispose();
                 throw;
             }
+
+            // Checked again once built: a call that passed the check at the top
+            // while Dispose was running could otherwise build a pod after Dispose
+            // had already been through the pool, and nothing would ever dispose it.
+            if (_disposed)
+            {
+                provider.Dispose();
+                source.Dispose();
+                throw new ObjectDisposedException(nameof(PodTracerPool));
+            }
+
+            return new PodEmitter(source, provider);
         }, LazyThreadSafetyMode.ExecutionAndPublication));
 
         try
@@ -89,6 +103,11 @@ public sealed class PodTracerPool : IDisposable
     }
 
     private volatile bool _disposed;
+
+    private int _builds;
+
+    /// <summary>How many pod providers this pool has built, for tests that a race builds one.</summary>
+    internal int Builds => Volatile.Read(ref _builds);
 
     /// <summary>
     /// The Resource one pod exports under, or null when that pod has not emitted yet.

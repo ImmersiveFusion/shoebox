@@ -177,6 +177,75 @@ flowchart LR
 
             result.NotTaken.Should().Contain(n => n.To == "s260" && n.Reason.StartsWith("not walked"));
             result.NotTaken.Should().NotContain(n => n.To == "s260" && n.Reason.StartsWith("never reached"));
+            result.NotTaken.Should().Contain(n => n.From == "island" && n.To == "elsewhere" && n.Reason.StartsWith("never reached"),
+                "nothing from the entry arrives at island, cut run or not");
+        }
+
+        [Test]
+        public void A_Cut_Run_Does_Not_Blame_The_Limit_For_Edges_It_Was_Never_Going_To_Take()
+        {
+            // The far side of a broken call and a phantom consumer are reached and
+            // declined before the cut. The limit had nothing to do with them, so
+            // they read exactly as in a run that was not cut.
+            const string head = @"
+flowchart LR
+  entry[Entry] -->|broken: connection refused| b[B]
+  b --> c[C]
+  entry --> q[[Q]]
+  q -->|phantom| ghost[Ghost]
+  ghost --> g2[G2]";
+            var fan = string.Join("\n", Enumerable.Range(1, 300).Select(i => $"  entry --> s{i}[S{i}]"));
+
+            using var pool = new PodTracerPool(target: null);
+            var cut = new TopologyRunner(pool).Run(MermaidParser.Parse(head + "\n" + fan), 1, "test");
+            var uncut = new TopologyRunner(pool).Run(MermaidParser.Parse(head), 1, "test");
+
+            cut.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"), "this run must be cut");
+            foreach (var (from, to) in new[] { ("b", "c"), ("q", "ghost"), ("ghost", "g2") })
+            {
+                cut.NotTaken.Where(n => n.From == from && n.To == to).Select(n => n.Reason)
+                    .Should().BeEquivalentTo(uncut.NotTaken.Where(n => n.From == from && n.To == to).Select(n => n.Reason),
+                        $"{from}->{to} reads the same whether or not the run was cut");
+            }
+
+            cut.NotTaken.Should().Contain(n => n.From == "entry" && n.To == "s300" && n.Reason.StartsWith("not walked: the run stopped at its budget"));
+        }
+
+        [Test]
+        public void Any_Node_Id_And_Any_Shoebox_Id_Give_A_Valid_Host_In_Its_Own_Namespace()
+        {
+            // A seeded property check over ids anyone could paste or send: any
+            // character, any length. The address is always a valid DNS name from a
+            // closed alphabet, the same every time, and distinct well-formed ids or
+            // shoebox ids never land on one host or one namespace.
+            var random = new Random(20261124);
+            // Whole characters, an emoji included as one: a lone surrogate cannot
+            // arrive, since node ids are ASCII by the parser's grammar and a shoebox
+            // id comes URL-decoded.
+            var alphabet = new[] { "a", "A", "z", "Z", "0", "9", "_", "-", ".", " ", "/", ":", "@", "%", "\r", "\n", "\t", "é", "中", "\U0001F525" };
+            string RandomId() => string.Concat(Enumerable.Range(0, random.Next(0, 90)).Select(_ => alphabet[random.Next(alphabet.Length)]));
+
+            var hostPattern = new System.Text.RegularExpressions.Regex(
+                @"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.(default|sb-[a-z0-9]{10})\.svc\.cluster\.local$");
+            var hosts = new Dictionary<string, string>(StringComparer.Ordinal);
+            var namespaces = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            for (var i = 0; i < 20_000; i++)
+            {
+                var id = RandomId();
+                var shoebox = RandomId();
+                var ns = Pod.NamespaceOf(shoebox);
+                var host = Pod.HostOf(id, ns);
+
+                host.Should().MatchRegex(hostPattern.ToString());
+                Pod.HostOf(id, Pod.NamespaceOf(shoebox)).Should().Be(host, "deterministic");
+                if (shoebox.Trim().Length > 3) ns.Should().NotContain(shoebox.ToLowerInvariant().Trim());
+
+                if (hosts.TryGetValue(Pod.HostLabelOf(id), out var other)) other.Should().Be(id, "two ids, one host");
+                else hosts[Pod.HostLabelOf(id)] = id;
+                if (namespaces.TryGetValue(ns, out var otherShoebox)) otherShoebox.Should().Be(shoebox, "two shoeboxes, one namespace");
+                else namespaces[ns] = shoebox;
+            }
         }
 
         [Test]
@@ -209,6 +278,7 @@ flowchart LR
             Parallel.For(0, 64, _ => sources.Add(pool.For("orders-api", 1)));
 
             sources.Distinct().Should().ContainSingle("every caller gets the one source of the one pod");
+            pool.Builds.Should().Be(1, "a race builds the pod once, not once per caller that lost it");
 
             pool.Dispose();
             var after = () => pool.For("orders-api", 2);

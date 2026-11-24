@@ -146,42 +146,47 @@ public sealed class TopologyRunner
         foreach (var edge in declined) accounted.Add($"{edge.From}->{edge.To}");
 
         var rest = graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}")).ToList();
-        if (!state.Exhausted && !state.DepthLimited)
+        if (state.CutEdges.Count == 0)
         {
             return declined.Concat(Unreached(rest)).ToList();
         }
 
         // A run cut at a limit did not walk everything it could reach, and saying
-        // "no path arrives" about those edges would be false: there is a path, the
-        // run stopped before it. Only edges out of pods the entry cannot reach at
-        // all are unreachable.
-        var reachable = Reachable(graph);
-        var stoppedAt = state.Exhausted
-            ? $"not walked: the run stopped at its budget of {RunLimits.MaxSpans} spans before reaching this edge"
-            : $"not walked: the run stopped at depth {RunLimits.MaxDepth} before reaching this edge";
+        // "no path arrives" about those edges would be false. So the edges a limit
+        // actually stopped are named as such, and so are the edges behind them
+        // that the run never got to. Nothing else changes: an edge the walk
+        // reached and did not take for its own reasons (a broken call's far side,
+        // a phantom consumer) is reported exactly as in an uncut run, because the
+        // limit had nothing to do with it.
+        var behind = Behind(graph, state);
+        const string behindReason = "not walked: it lies behind an edge the run stopped at, at a limit";
 
         return declined
-            .Concat(rest.Where(c => reachable.Contains(c.FromId)).Select(c => new NotTaken(c.FromId, c.ToId, stoppedAt)))
-            .Concat(Unreached(rest.Where(c => !reachable.Contains(c.FromId))))
+            .Concat(rest.Select(c =>
+                state.CutEdges.TryGetValue($"{c.FromId}->{c.ToId}", out var why) ? new NotTaken(c.FromId, c.ToId, why)
+                : behind.Contains(c.FromId) ? new NotTaken(c.FromId, c.ToId, behindReason)
+                : null)
+                .OfType<NotTaken>())
+            .Concat(Unreached(rest.Where(c => !state.CutEdges.ContainsKey($"{c.FromId}->{c.ToId}") && !behind.Contains(c.FromId))))
             .ToList();
     }
 
-    /// <summary>Every pod a path from the entry point can arrive at, the entry included.</summary>
-    private static HashSet<string> Reachable(Graph graph)
+    /// <summary>
+    /// Pods the run never entered that lie past an edge a limit stopped: what the
+    /// cut kept the request from, as opposed to what it never would have reached.
+    /// </summary>
+    private static HashSet<string> Behind(Graph graph, RunState state)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        if (graph.Entry is not { } entry) return seen;
-
-        var pending = new Stack<string>();
-        pending.Push(entry.Id);
+        var behind = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>(state.CutEdges.Keys.Select(k => k[(k.IndexOf("->", StringComparison.Ordinal) + 2)..]));
         while (pending.Count > 0)
         {
             var id = pending.Pop();
-            if (!seen.Add(id)) continue;
+            if (state.Visited.Contains(id) || !behind.Add(id)) continue;
             foreach (var call in graph.From(id)) pending.Push(call.ToId);
         }
 
-        return seen;
+        return behind;
     }
 
     /// <summary>
@@ -251,19 +256,21 @@ public sealed class TopologyRunner
         if (state.Exhausted)
         {
             state.NoteOnce(BudgetNote(graph));
+            state.CutAll(graph.From(pod.Id), budget: true);
             return null;
         }
 
         if (depth > RunLimits.MaxDepth)
         {
+            state.CutAll(graph.From(pod.Id), budget: false);
             // NoteOnce, not Note. This fired on every branch that reached the
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
-            state.DepthLimited = true;
             state.NoteOnce(DepthNote(graph));
             return null;
         }
 
+        state.Visited.Add(pod.Id);
         var instance = SelectInstance(pod, state.RunIndex);
         var source = _pool.For(pod.ServiceName, instance, pod.Revision);
 
@@ -339,12 +346,18 @@ public sealed class TopologyRunner
             activity?.SetStatus(ActivityStatusCode.Error, failure);
         }
 
-        foreach (var call in graph.From(pod.Id))
+        var outgoing = graph.From(pod.Id).ToList();
+        for (var index = 0; index < outgoing.Count; index++)
         {
             // Checked per edge, not only on entry. A pod fanning out to six
             // consumers would otherwise spend six times the budget past the point
             // it ran out, once for every branch already inside the loop.
-            if (state.Exhausted) break;
+            var call = outgoing[index];
+            if (state.Exhausted)
+            {
+                state.CutAll(outgoing.Skip(index), budget: true);
+                break;
+            }
 
             var target = graph.ById(call.ToId);
             if (target is null) continue;
@@ -496,6 +509,7 @@ public sealed class TopologyRunner
         if (RunLimits.MaxSpans - state.SpanCount < 2)
         {
             state.Stop();
+            state.Cut(caller.Id, callee.Id, budget: true);
             state.NoteOnce(BudgetNote(graph));
             return null;
         }
@@ -504,7 +518,7 @@ public sealed class TopologyRunner
         // so the call is not emitted either.
         if (depth + 1 > RunLimits.MaxDepth)
         {
-            state.DepthLimited = true;
+            state.Cut(caller.Id, callee.Id, budget: false);
             state.NoteOnce(DepthNote(graph));
             return null;
         }
@@ -613,13 +627,14 @@ public sealed class TopologyRunner
             if (RunLimits.MaxSpans - state.SpanCount < 2)
             {
                 state.Stop();
+                state.Cut(producer.Id, queue.Id, budget: true);
                 state.NoteOnce(BudgetNote(graph));
                 return;
             }
 
             if (depth + 1 > RunLimits.MaxDepth)
             {
-                state.DepthLimited = true;
+                state.Cut(producer.Id, queue.Id, budget: false);
                 state.NoteOnce(DepthNote(graph));
                 return;
             }
@@ -651,7 +666,11 @@ public sealed class TopologyRunner
 
         foreach (var call in consumers)
         {
-            if (state.Exhausted) break;
+            if (state.Exhausted)
+            {
+                state.CutAll(consumers.SkipWhile(c => !ReferenceEquals(c, call)), budget: true);
+                break;
+            }
 
             var consumer = graph.ById(call.ToId);
             if (consumer is null) continue;
@@ -991,8 +1010,24 @@ public sealed class TopologyRunner
         /// </summary>
         public void Stop() => _stopped = true;
 
-        /// <summary>Whether some path was cut at the depth limit, so not every reachable edge was walked.</summary>
-        public bool DepthLimited { get; set; }
+        /// <summary>
+        /// The edges a limit stopped the walk at, keyed <c>from->to</c>, with why.
+        /// Only these, and what lies behind them, are "not walked".
+        /// </summary>
+        public Dictionary<string, string> CutEdges { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Pods the walk entered, on any path.</summary>
+        public HashSet<string> Visited { get; } = new(StringComparer.Ordinal);
+
+        public void Cut(string from, string to, bool budget) =>
+            CutEdges.TryAdd($"{from}->{to}", budget
+                ? $"not walked: the run stopped at its budget of {RunLimits.MaxSpans} spans before taking this edge"
+                : $"not walked: the run stopped at depth {RunLimits.MaxDepth} before taking this edge");
+
+        public void CutAll(IEnumerable<Call> calls, bool budget)
+        {
+            foreach (var call in calls) Cut(call.FromId, call.ToId, budget);
+        }
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and
