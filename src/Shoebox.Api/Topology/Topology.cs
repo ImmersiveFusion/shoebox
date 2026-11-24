@@ -71,7 +71,7 @@ public sealed record Pod(
     public static string HostOf(string nodeId)
     {
         var label = Reduce(nodeId);
-        if (!string.Equals(label, nodeId, StringComparison.Ordinal) || label.Length > MaxDnsLabel)
+        if (label.Length == 0 || !string.Equals(label, nodeId, StringComparison.Ordinal) || label.Length > MaxDnsLabel)
         {
             var room = MaxDnsLabel - HostSuffixLength - 1;
             if (label.Length > room) label = label[..room].TrimEnd('-');

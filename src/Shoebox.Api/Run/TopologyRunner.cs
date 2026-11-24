@@ -235,7 +235,12 @@ public sealed class TopologyRunner
             // NoteOnce, not Note. This fired on every branch that reached the
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
-            state.NoteOnce($"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle.");
+            //
+            // And a cycle only where there is one: a long acyclic chain reaches the
+            // limit too, and blaming a loop it does not have misleads.
+            state.NoteOnce(graph.CyclicPods.Count > 0
+                ? $"Walk stopped at depth {RunLimits.MaxDepth}, the diagram contains a cycle."
+                : $"Walk stopped at depth {RunLimits.MaxDepth}: this chain of calls is longer than a run follows, and nothing past that depth ran.");
             return null;
         }
 
@@ -434,6 +439,10 @@ public sealed class TopologyRunner
             state.Leave(target.Id);
         }
 
+        // A server says what it answered, as its caller's CLIENT span does, so the
+        // two halves of a call agree on the outcome from either side.
+        if (kind == ActivityKind.Server) activity?.SetTag("http.response.status_code", failure is null ? 200 : 500);
+
         activity?.SetEndTime(state.Clock.UtcDateTime);
         return failure;
     }
@@ -487,6 +496,8 @@ public sealed class TopologyRunner
             state.SpanCount++;
             client.SetTag(ShoeboxConstants.TagKey, Baggage.GetBaggage(ShoeboxConstants.TagKey));
             client.SetTag("service.instance.id", caller.InstanceId(callerInstance));
+            // On a CLIENT span this names what was called, as it does on the
+            // dependency calls (EmitDependencyCall); on a pod's own span it names the pod.
             client.SetTag("shoebox.pod.kind", callee.Kind.ToString().ToLowerInvariant());
             client.SetTag("http.request.method", "GET");
             client.SetTag("server.address", callee.Host);

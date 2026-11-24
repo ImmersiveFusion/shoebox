@@ -172,7 +172,9 @@ Kubernetes Service keeps its DNS name: node `api` answers on
 `api.default.svc.cluster.local`, route `/api`. An id that is already a DNS label (up
 to 63 lowercase letters, digits and single hyphens) is used as it is. Any other id
 (`Api`, `order_api`, or a longer one) is lowercased, cut to fit if needed, and given a
-five-character suffix hashed from the id as written, so two ids never share a host.
+five-character suffix hashed from the id as written, so `Api` and `api` get different
+hosts. Two ids share a host only if one is literally written as the other's suffixed
+form, or two suffixed ids draw the same hash, about one chance in fourteen million.
 The route is the host's first label, suffix included.
 
 So keep the id and change the label, and the service is renamed: the old
@@ -228,7 +230,11 @@ anyway.
 
 There is a 500-span budget behind all of this, and it is a backstop rather than the
 mechanism: path enumeration is factorial in the worst case, so a pathological mesh
-can still be stopped. An honest diagram never reaches it. The Azure reference
+can still be stopped. An honest diagram never reaches it. A run cut by the budget, or by
+the depth limit of 32 calls, stops at a whole call: a call is emitted with both its
+spans or not at all, and only emitted calls are in `hops`, so a cut run never shows a
+call nothing answered. The note says which limit it hit, and only mentions a cycle
+when the diagram has one. The Azure reference
 architecture that first exposed all of this comes out at 44 spans.
 
 **Labels become telemetry names, and are slugified on the way.** A queue label goes

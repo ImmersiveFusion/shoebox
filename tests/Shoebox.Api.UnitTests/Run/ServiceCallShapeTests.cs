@@ -238,7 +238,8 @@ flowchart LR
             hosts.Should().OnlyHaveUniqueItems();
             hosts.Should().OnlyContain(h => System.Text.RegularExpressions.Regex.IsMatch(
                 h, @"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.default\.svc\.cluster\.local$"));
-            Pod.HostOf("Api").Should().Be(Pod.HostOf("Api"), "deterministic, so a shared link names the same host");
+            Pod.HostOf("Api").Should().Be("api-qrx24.default.svc.cluster.local", "deterministic, so a shared link names the same host everywhere");
+            Pod.HostOf("").Should().MatchRegex(@"^svc-[a-z0-9]{5}\.default\.svc\.cluster\.local$", "an empty id still gets a valid host");
         }
 
         [Test]
@@ -347,6 +348,54 @@ flowchart LR
             System.Text.RegularExpressions.Regex.IsMatch(label, "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").Should().BeTrue();
             Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', 63)), "a cut id must not collide with one that fits");
             Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', length + 1)), "two cut ids must not collide");
+        }
+
+        [Test]
+        public void A_Chain_Past_The_Depth_Limit_Stops_At_A_Whole_Call()
+        {
+            // 40 services in a line, no cycle: the walk stops at depth 32. The last
+            // call is not emitted at all, rather than as a CLIENT span nothing
+            // answers, and the hops are exactly the calls that were.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i < 40; i++) lines.Add($"  s{i}[S{i}] --> s{i + 1}[S{i + 1}]");
+
+            var captured = new List<Activity>();
+            using var listener = new ActivityListener
+            {
+                ShouldListenTo = _ => true,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                ActivityStopped = captured.Add,
+            };
+            ActivitySource.AddActivityListener(listener);
+            using var pool = new PodTracerPool(target: null);
+            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
+            var spans = captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
+
+            var calls = spans.Where(s => s.Kind == ActivityKind.Client).ToList();
+            calls.Should().HaveCount(RunLimits.MaxDepth, "s1 at depth 0 calls down to depth 32 and no further");
+            foreach (var call in calls)
+            {
+                spans.Should().Contain(s => s.ParentSpanId == call.SpanId && s.Kind == ActivityKind.Server);
+            }
+
+            result.Hops.Should().HaveCount(calls.Count);
+            result.Notes.Should().Contain(n => n.Contains($"depth {RunLimits.MaxDepth}"))
+                .And.NotContain(n => n.Contains("cycle"), "this chain has none");
+        }
+
+        [Test]
+        public void A_Server_Span_Says_What_It_Answered()
+        {
+            var spans = Capture(@"
+flowchart LR
+  web[Storefront] --> api[Orders API]
+  web --> stock[Stock API]
+  api -->|broken: wrong column| db[(SQL Server)]");
+
+            spans.Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "orders-api")
+                .GetTagItem("http.response.status_code").Should().Be(500);
+            spans.Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "stock-api")
+                .GetTagItem("http.response.status_code").Should().Be(200);
         }
 
         [Test]
