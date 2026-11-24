@@ -42,7 +42,11 @@ flowchart LR
             return CaptureWith(diagram, pool, run);
         }
 
-        private static List<Activity> CaptureWith(string diagram, PodTracerPool pool, int run = 1)
+        private static List<Activity> CaptureWith(string diagram, PodTracerPool pool, int run = 1) =>
+            Fire(diagram, pool, run).Spans;
+
+        /// <summary>One run, with its result and the spans of its own trace.</summary>
+        private static (RunResult Result, List<Activity> Spans) Fire(string diagram, PodTracerPool pool, int run = 1)
         {
             var captured = new List<Activity>();
             using var listener = new ActivityListener
@@ -54,7 +58,7 @@ flowchart LR
             ActivitySource.AddActivityListener(listener);
 
             var result = new TopologyRunner(pool).Run(MermaidParser.Parse(diagram), run, "test");
-            return captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
+            return (result, captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList());
         }
 
         // A pod's ActivitySource is named by its pod name, {service}-{templateHash}-{suffix}
@@ -100,9 +104,9 @@ flowchart LR
         [Test]
         public void Every_Service_Call_Has_Exactly_One_Answer_On_The_Same_Address()
         {
-            // The inference trap from the {service}.internal attempt: a dialled host
-            // nothing answers on is a peer nobody has seen. Every successful call's
-            // host must be answered by exactly one SERVER span, its child.
+            // A dialled host nothing answers on reads as a peer nobody has seen, so
+            // every successful call's host is answered by exactly one SERVER span,
+            // its child.
             var spans = Capture(Before);
             var calls = spans.Where(s => s.Kind == ActivityKind.Client && s.GetTagItem("url.full") is not null).ToList();
 
@@ -123,6 +127,33 @@ flowchart LR
 
             after.GetTagItem("server.address").Should().Be(before.GetTagItem("server.address"));
             after.GetTagItem("http.route").Should().Be(before.GetTagItem("http.route"));
+        }
+
+        [Test]
+        public void A_Staged_Rename_On_A_Timer_Hands_Over_On_One_Address()
+        {
+            // What the staged rename is: firing on a timer, one process, the diagram
+            // edited mid-stream. Runs 1 to 10 fire the old label, 11 to 20 the new.
+            // The old name stops exactly at the edit, the new one starts there, and
+            // every run, before and after, is called by the same caller on the same
+            // address and calls the same things.
+            using var pool = new PodTracerPool(target: null);
+            var runs = Enumerable.Range(1, 20)
+                .Select(run => (Run: run, Spans: CaptureWith(run <= 10 ? Before : After, pool, run)))
+                .ToList();
+
+            foreach (var (run, spans) in runs)
+            {
+                var server = spans.Single(s => s.Kind == ActivityKind.Server && s.GetTagItem("server.address") as string == Pod.HostOf("api"));
+                ServiceOf(server).Should().Be(run <= 10 ? "orders-api" : "orders-service", $"run {run}");
+                ServiceOf(spans.Single(s => s.SpanId == server.ParentSpanId)).Should().Be("storefront", $"run {run}");
+                spans.Where(s => s.ParentSpanId == server.SpanId)
+                    .Select(s => (string?)(s.GetTagItem("server.address") ?? s.GetTagItem("messaging.destination.name")))
+                    .Should().BeEquivalentTo(new[] { "orders-postgres", Pod.HostOf("stock"), "orders-created" }, $"run {run}");
+            }
+
+            runs.SelectMany(r => r.Spans).Select(ServiceOf).Distinct()
+                .Should().BeEquivalentTo("storefront", "orders-api", "orders-service", "stock-api", "shipping-worker");
         }
 
         [Test]
@@ -392,17 +423,8 @@ flowchart LR
             var lines = new List<string> { "flowchart LR" };
             for (var i = 1; i < 40; i++) lines.Add($"  s{i}[S{i}] --> s{i + 1}[S{i + 1}]");
 
-            var captured = new List<Activity>();
-            using var listener = new ActivityListener
-            {
-                ShouldListenTo = _ => true,
-                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-                ActivityStopped = captured.Add,
-            };
-            ActivitySource.AddActivityListener(listener);
             using var pool = new PodTracerPool(target: null);
-            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
-            var spans = captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
+            var (result, spans) = Fire(string.Join("\n", lines), pool);
 
             var calls = spans.Where(s => s.Kind == ActivityKind.Client).ToList();
             calls.Should().HaveCount(RunLimits.MaxDepth, "s1 at depth 0 calls down to depth 32 and no further");
@@ -463,17 +485,8 @@ flowchart LR
                 foreach (var b in ids.Where(b => b != a))
                     lines.Add($"  {a}[{a.ToUpperInvariant()}] --> {b}[{b.ToUpperInvariant()}]");
 
-                var captured = new List<Activity>();
-                using var listener = new ActivityListener
-                {
-                    ShouldListenTo = _ => true,
-                    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-                    ActivityStopped = captured.Add,
-                };
-                ActivitySource.AddActivityListener(listener);
                 using var pool = new PodTracerPool(target: null);
-                var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
-                var spans = captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
+                var (result, spans) = Fire(string.Join("\n", lines), pool);
 
                 result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"), $"a {size}-node mesh must reach the cap");
                 result.SpanCount.Should().BeLessThanOrEqualTo(RunLimits.MaxSpans);
@@ -491,10 +504,15 @@ flowchart LR
         [Test]
         public void The_Route_Is_The_Hosts_First_Label()
         {
-            var server = Capture("flowchart LR\n  web[Storefront] --> order_api[Orders API]")
-                .Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "orders-api");
+            var spans = Capture("flowchart LR\n  web[Storefront] --> order_api[Orders API]");
+            var server = spans.Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "orders-api");
+            var host = Pod.HostOf("order_api");
+            var route = $"/{host.Split('.')[0]}";
 
-            server.GetTagItem("http.route").Should().Be($"/{Pod.HostOf("order_api").Split('.')[0]}");
+            route.Should().MatchRegex("^/order-api-[a-z0-9]{5}$", "a suffixed id keeps its suffix in the route");
+            server.GetTagItem("http.route").Should().Be(route);
+            spans.Single(s => s.SpanId == server.ParentSpanId).GetTagItem("url.full")
+                .Should().Be($"http://{host}:{Pod.ServicePort}{route}", "the caller dials the route the callee answers on");
         }
     }
 }

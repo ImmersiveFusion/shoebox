@@ -164,10 +164,18 @@ redeploy is a new release, so a backend that keeps version history shows each bu
 one, and the same diagram always reports the same versions.
 
 **A relabel is a rename.** A call from one service to another is two spans, as in a
-real system: a CLIENT span under the caller naming the host it dialled
-(`server.address`, `server.port`), and a SERVER span under the callee, its child,
-answering on the same host with an `http.route`. The entry service's SERVER span
-carries its host too. The host comes from the node id, never the label, the way a
+real system: a CLIENT span under the caller naming the host it dialled, and a SERVER
+span under the callee, its child, answering on the same host. The entry service's
+SERVER span carries its host too. Each carries the HTTP attributes its kind requires
+or recommends in the OpenTelemetry conventions, and nothing else:
+
+| Span | Attributes |
+|---|---|
+| CLIENT (the caller) | `http.request.method` `GET`, `server.address`, `server.port` `8080`, `url.full`, `http.response.status_code` (`200`, or `500` with `error.type` and an error status when the callee failed) |
+| SERVER (the callee) | `http.request.method` `GET`, `http.route`, `server.address`, `server.port` `8080`, `http.response.status_code` (`200`, or `500` when it failed) |
+
+Both also carry `shoebox.id`, `shoebox.pod.kind` and `service.instance.id`, as every
+pod's span does. The host comes from the node id, never the label, the way a
 Kubernetes Service keeps its DNS name: node `api` answers on
 `api.default.svc.cluster.local`, route `/api`. An id that is already a DNS label (up
 to 63 lowercase letters, digits and single hyphens) is used as it is. Any other id

@@ -249,10 +249,9 @@ public sealed class TopologyRunner
         //
         // A service reached any other way is answering a request, so its span is
         // SERVER, whether it is the entry point or was called by another service.
-        // A called service used to emit a CLIENT span under its own name, which
-        // claimed it was calling something when it was being called, and left it
-        // with no SERVER span to say where it answers. The call itself is now the
-        // caller's CLIENT span; see CallService.
+        // A CLIENT span under the callee's own name would claim it was calling
+        // something while it was being called, and leave nothing to say where it
+        // answers. The call itself is the caller's CLIENT span; see CallService.
         var kind = via is not null
             ? ActivityKind.Consumer
             : pod.Kind == PodKind.Service ? ActivityKind.Server : ActivityKind.Client;
@@ -448,10 +447,9 @@ public sealed class TopologyRunner
     /// <c>server.address</c>, matched to the host its caller dialled.
     ///
     /// The address is the callee's node id (<see cref="Pod.Host"/>), so it survives a
-    /// relabel. The earlier attempt at an address put <c>{service}.internal</c> on
-    /// the service's own span with no SERVER span answering on it, so every service
-    /// read as a peer nobody had seen. Here the dialled host and the answering host
-    /// are one value, written by both sides of the same call.
+    /// relabel. The dialled host and the answering host are one value, written by
+    /// both sides of the same call, so no address appears that nothing answers on:
+    /// an address with no answer reads as a peer nobody has seen.
     /// </summary>
     /// <returns>The callee's failure, so the caller fails with it. Null when it did not fail.</returns>
     private string? CallService(Graph graph, Pod caller, int callerInstance, Pod callee, Activity? parent, RunState state, int depth)
@@ -856,19 +854,12 @@ public sealed class TopologyRunner
                 // http.route is a SERVER-span attribute and appears nowhere in the
                 // client table, so it is conditional on kind.
                 //
-                // And nothing else. A previous attempt put server.address here as
-                // "{service}.internal", which invented a hostname that nothing
-                // ever emits under, so every internal service in the diagram was
-                // inferred as a phantom peer. server.* describes the far end of an
-                // outbound call; this span is the pod itself, and the pod is not
-                // its own peer. Naming a host that does not exist is the same
-                // fabrication as naming an attribute that does not exist.
-                //
-                // The SERVER span is the other case: it is the far end, and it says
-                // where it answers. That is server.address on a SERVER span as the
-                // HTTP server conventions define it, and the same host its caller
-                // dialled (see CallService), so the two agree rather than inventing
-                // a peer.
+                // So is server.address. On a SERVER span it is where this service
+                // answers, as the HTTP server conventions define it, and it is the
+                // same host its caller dialled (see CallService), so the two halves
+                // of a call agree. Any other span of a pod is not a call to a peer,
+                // and a host on it would name a peer that nothing answers for:
+                // exactly the phantom an inference engine would report.
                 if (kind == ActivityKind.Server)
                 {
                     yield return new("http.route", pod.Route);
