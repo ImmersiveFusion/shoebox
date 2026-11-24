@@ -55,8 +55,16 @@ public sealed record Pod(
     /// </summary>
     public string Host => HostOf(Id);
 
-    /// <summary>The port every simulated service listens on.</summary>
-    public const int ServicePort = 8080;
+    /// <summary>
+    /// The route a service answers on: <c>/</c> and the first label of its host.
+    ///
+    /// From the node id like the address, so a relabel leaves the API where it was:
+    /// renaming a service does not move its endpoints. The first label is taken as
+    /// it is, hash suffix included for an id that needed one, so two nodes whose
+    /// ids reduce to the same letters still have different routes, as they have
+    /// different hosts.
+    /// </summary>
+    public string Route => $"/{Host[..Host.IndexOf('.')]}";
 
     /// <summary>
     /// A Kubernetes Service DNS name for a node id: <c>{id}.default.svc.cluster.local</c>.
@@ -196,6 +204,9 @@ public sealed record Pod(
         SafeEncode($"{serviceName}|{revision}", TemplateHashLength);
 
     public const int TemplateHashLength = 10;
+
+    /// <summary>The port every simulated service listens on, as in <see cref="Host"/>.</summary>
+    public const int ServicePort = 8080;
 
     public const int SuffixLength = 5;
 

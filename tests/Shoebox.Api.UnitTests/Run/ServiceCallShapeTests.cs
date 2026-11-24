@@ -57,8 +57,18 @@ flowchart LR
             return captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
         }
 
-        private static string ServiceOf(Activity span) =>
-            span.Source.Name[..(span.Source.Name.Length - Pod.TemplateHashLength - Pod.SuffixLength - 2)];
+        // A pod's ActivitySource is named by its pod name, {service}-{templateHash}-{suffix}
+        // (Pod.InstanceIdOf). Matched as that whole shape, so a change to the format
+        // fails here loudly instead of slicing a wrong service name.
+        private static readonly System.Text.RegularExpressions.Regex PodName = new(
+            $"^(?<service>.+)-[{Pod.SafeAlphabet}]{{{Pod.TemplateHashLength}}}-[{Pod.SafeAlphabet}]{{{Pod.SuffixLength}}}$");
+
+        private static string ServiceOf(Activity span)
+        {
+            var match = PodName.Match(span.Source.Name);
+            if (!match.Success) throw new InvalidOperationException($"{span.Source.Name} is not a pod name");
+            return match.Groups["service"].Value;
+        }
 
         [Test]
         public void A_Call_Is_A_Client_Span_Under_The_Caller_And_A_Server_Span_Under_The_Callee()
@@ -238,6 +248,9 @@ flowchart LR
             hosts.Should().OnlyHaveUniqueItems();
             hosts.Should().OnlyContain(h => System.Text.RegularExpressions.Regex.IsMatch(
                 h, @"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.default\.svc\.cluster\.local$"));
+            // Pinned from a run of HostOf as written: the suffix is SHA-256 of "host|Api"
+            // in the Kubernetes name alphabet. If this changes, every shared link's hosts
+            // moved, and a backend would see each service on a new address.
             Pod.HostOf("Api").Should().Be("api-qrx24.default.svc.cluster.local", "deterministic, so a shared link names the same host everywhere");
             Pod.HostOf("").Should().MatchRegex(@"^svc-[a-z0-9]{5}\.default\.svc\.cluster\.local$", "an empty id still gets a valid host");
         }
@@ -348,6 +361,26 @@ flowchart LR
             System.Text.RegularExpressions.Regex.IsMatch(label, "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").Should().BeTrue();
             Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', 63)), "a cut id must not collide with one that fits");
             Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', length + 1)), "two cut ids must not collide");
+        }
+
+        [Test]
+        public void With_One_Span_Left_A_Service_Call_Is_Skipped_And_A_Database_Call_Still_Runs()
+        {
+            // Entry SERVER (1) plus 249 calls of two spans each is 499. The 250th
+            // service call does not fit and is skipped; the database call after it
+            // is one span, fits, and runs, ending the run exactly at the budget.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i <= 250; i++) lines.Add($"  entry[Entry] --> s{i}[S{i}]");
+            lines.Add("  entry --> db[(Postgres)]");
+
+            using var pool = new PodTracerPool(target: null);
+            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
+
+            result.SpanCount.Should().Be(RunLimits.MaxSpans);
+            result.Hops.Should().Contain(h => h.To == "db", "a one-span step still fits");
+            result.Hops.Should().NotContain(h => h.To == "s250", "a call that does not fit is not a hop");
+            result.Hops.Count(h => h.To.StartsWith('s')).Should().Be(249);
+            result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"));
         }
 
         [Test]

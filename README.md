@@ -230,12 +230,16 @@ anyway.
 
 There is a 500-span budget behind all of this, and it is a backstop rather than the
 mechanism: path enumeration is factorial in the worst case, so a pathological mesh
-can still be stopped. An honest diagram never reaches it. A run cut by the budget, or by
-the depth limit of 32 calls, stops at a whole call: a call is emitted with both its
-spans or not at all, and only emitted calls are in `hops`, so a cut run never shows a
-call nothing answered. The note says which limit it hit, and only mentions a cycle
-when the diagram has one. The Azure reference
+can still be stopped. An honest diagram never reaches it. The Azure reference
 architecture that first exposed all of this comes out at 44 spans.
+
+A run cut by the budget, or by the depth limit of 32 calls, is cut at whole calls. A
+call between services is emitted with both its spans or not at all, and only calls
+made in full are in `hops`, so a cut run never shows a call nothing answered. With one
+span of budget left, a call between services no longer fits and is skipped, while a
+one-span step such as a database call still runs, so a cut run can end a span or so
+short of the budget. The note says which limit was hit, and mentions a cycle only when
+the diagram has one.
 
 **Labels become telemetry names, and are slugified on the way.** A queue label goes
 through the same slugifier as a service name, so `q[[orders.created]]` publishes to a

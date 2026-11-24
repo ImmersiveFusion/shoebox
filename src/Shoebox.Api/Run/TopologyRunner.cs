@@ -216,17 +216,7 @@ public sealed class TopologyRunner
         // reached and never would have been.
         if (state.Exhausted)
         {
-            // The cycle explanation only where there is a cycle. A large acyclic
-            // diagram can reach the budget too, and blaming a loop it does not have
-            // sends the person looking for the wrong thing.
-            state.NoteOnce(graph.CyclicPods.Count > 0
-                ? $"Walk stopped at {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
-                  "the request kept arriving back where it started and this run is a truncated " +
-                  "prefix of an unbounded one rather than a picture of the system. " +
-                  "Nothing below this point ran, and the hops and timings above it are still real."
-                : $"Walk stopped at {RunLimits.MaxSpans} spans. One request through this diagram " +
-                  "makes more spans than a run emits, so this run is a truncated prefix of it. " +
-                  "Nothing below this point ran, and the hops and timings above it are still real.");
+            state.NoteOnce(BudgetNote(graph));
             return null;
         }
 
@@ -468,20 +458,27 @@ public sealed class TopologyRunner
     {
         // A call is two spans, and both fit or neither is emitted. With one slot
         // left, the CLIENT half alone would be a call dialling a host nothing
-        // answers on, which is exactly what reads as a peer nobody has seen. The
-        // run stops here instead, and Visit writes the usual note about why.
-        //
+        // answers on, which is exactly what reads as a peer nobody has seen. Only
+        // this call is skipped: a sibling that is one span (a database, a cache, a
+        // publish) still fits and still runs, and the budget note says the walk
+        // was cut.
+        if (RunLimits.MaxSpans - state.SpanCount < 2)
+        {
+            state.NoteOnce(BudgetNote(graph));
+            return null;
+        }
+
         // The depth limit is the same case: past it Visit returns before the callee
         // answers, so the call is not emitted either, and Visit notes the limit.
-        if (RunLimits.MaxSpans - state.SpanCount < 2 || depth + 1 > RunLimits.MaxDepth)
+        if (depth + 1 > RunLimits.MaxDepth)
         {
-            if (depth + 1 <= RunLimits.MaxDepth) state.Stop();
             _ = Visit(graph, callee, parent, state, depth + 1);
             return null;
         }
 
-        // Recorded here, after the budget check, so a hop is only ever a call that
-        // was emitted: the client replays hops as the path the request took.
+        // Recorded here, after both limits, so a hop is only ever a call the walk
+        // made in full: the client replays hops as the path the request took. A
+        // hop does not depend on sampling, any more than the run does.
         state.Hop(caller.Id, callee.Id, failed: false, ms: callee.DefaultLatencyMs);
 
         var source = _pool.For(caller.ServiceName, callerInstance, caller.Revision);
@@ -502,10 +499,12 @@ public sealed class TopologyRunner
             client.SetTag("http.request.method", "GET");
             client.SetTag("server.address", callee.Host);
             client.SetTag("server.port", Pod.ServicePort);
-            client.SetTag("url.full", $"http://{callee.Host}:{Pod.ServicePort}{Route(callee)}");
+            client.SetTag("url.full", $"http://{callee.Host}:{Pod.ServicePort}{callee.Route}");
         }
 
-        var why = Visit(graph, callee, client, state, depth + 1);
+        // If the CLIENT span was not recorded, the callee hangs under the caller's
+        // own span rather than starting a trace of its own.
+        var why = Visit(graph, callee, client ?? parent, state, depth + 1);
         if (client is not null)
         {
             // The caller saw what the callee answered. A 500 from the far side is an
@@ -528,11 +527,20 @@ public sealed class TopologyRunner
     }
 
     /// <summary>
-    /// The route a service answers on, from its node id like its address, so a
-    /// relabel leaves the API where it was: renaming a service does not move its
-    /// endpoints.
+    /// Why the walk stopped short of the diagram, said once per run.
+    ///
+    /// The cycle explanation only where there is a cycle. A large acyclic diagram
+    /// can reach the budget too, and blaming a loop it does not have sends the
+    /// person looking for the wrong thing.
     /// </summary>
-    private static string Route(Pod pod) => $"/{pod.Host.Split('.')[0]}";
+    private static string BudgetNote(Graph graph) => graph.CyclicPods.Count > 0
+        ? $"Walk stopped at its budget of {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
+          "the request kept arriving back where it started and this run is a truncated " +
+          "prefix of an unbounded one rather than a picture of the system. " +
+          "Nothing below this point ran, and the hops and timings above it are still real."
+        : $"Walk stopped at its budget of {RunLimits.MaxSpans} spans. One request through this diagram " +
+          "makes more spans than a run emits, so this run is a truncated prefix of it. " +
+          "Nothing below this point ran, and the hops and timings above it are still real.";
 
     /// <summary>
     /// The publish, and whatever picks it up.
@@ -863,7 +871,7 @@ public sealed class TopologyRunner
                 // a peer.
                 if (kind == ActivityKind.Server)
                 {
-                    yield return new("http.route", Route(pod));
+                    yield return new("http.route", pod.Route);
                     yield return new("server.address", pod.Host);
                     yield return new("server.port", Pod.ServicePort);
                 }
@@ -906,12 +914,7 @@ public sealed class TopologyRunner
         /// Whether this run has spent its span budget. See <see cref="RunLimits"/>
         /// for why the budget rather than the depth limit is the real bound.
         /// </summary>
-        public bool Exhausted => _stopped || SpanCount >= RunLimits.MaxSpans;
-
-        private bool _stopped;
-
-        /// <summary>Ends the walk early, when what is left of the budget cannot hold the next whole step.</summary>
-        public void Stop() => _stopped = true;
+        public bool Exhausted => SpanCount >= RunLimits.MaxSpans;
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and
