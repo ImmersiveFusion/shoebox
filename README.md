@@ -194,12 +194,20 @@ share a host only if one is literally written as the other's suffixed form, or t
 suffixed ids draw the same of about 282 billion suffixes. The route is the host's first
 label, suffix included, and is the same in every namespace.
 
-So keep the id and change the label, and the service is renamed: the old
+The namespace is exactly as private as the shoebox id. A share link carries the id, so
+whoever opens it is in the same shoebox and the same namespace, which is what sharing a
+shoebox means. A run sent with no id at all is in `default`, shared with every other
+such run.
+
+So keep the id and change the words of the label, leaving its `xN`, `revN` and `#N`
+markers as they were, and the service is renamed: the old
 `service.name` goes quiet, and a new one starts on the same address, with the same
 callers and the same dependencies. What changes is exactly what is built from
 `service.name`: the pod names (`service.instance.id`, since a pod is named after its
 service) and the SERVER span's name (`orders-service handle`). Addresses, routes,
-ports, span kinds, parents, statuses and every other attribute stay as they were.
+ports, span kinds, parents, statuses and every other attribute stay as they were. A new
+label that another node already has is not a rename but a merge: two addresses under
+one `service.name`.
 
 ```mermaid
 flowchart LR
@@ -220,7 +228,11 @@ the new one. The entry point has no callers to compare, so to stage a rename, re
 a service something calls, and put a caller in front of it if nothing does. It has to
 be called directly: a service reached only through a queue answers with a CONSUMER
 span, which has no address, so relabelling it cannot read as a rename. Keep the same
-shoebox for the whole staging, since a new shoebox is a new namespace.
+shoebox for the whole staging, since a new shoebox is a new namespace, and fire from one
+tab at a steady pace (every 5 to 10 seconds): a gap from a second tab or a rate limit
+can make the old name look quiet before the edit. A relabel alone does not change
+`service.version`; the new name starts at the version its rev marker says, so bump the
+rev in a separate step if a redeploy is what you want to show.
 
 Datastores, caches, third parties and queues are named by their labels as before,
 and a call that fails outright (`broken`) is emitted as before, with no address.
@@ -253,12 +265,16 @@ mechanism: path enumeration is factorial in the worst case, so a pathological me
 can still be stopped. An honest diagram never reaches it. The Azure reference
 architecture that first exposed all of this comes out at 57 spans.
 
-A run cut by the budget, or by the depth limit of 32 calls, is cut at whole calls. A
-call between services is emitted with both its spans or not at all, and only calls
-made in full are in `hops`, so a cut run never shows a call nothing answered. When one
-span of budget is left, the next call between services no longer fits and the walk
-stops there, so a cut run can end one span short of the budget. The note says which
-limit was hit, and mentions a cycle only when the diagram has one.
+A run cut by the budget, or by the depth limit of 32 calls, is cut at whole steps. A
+call between services is emitted with both its spans or not at all, and so is a
+publish to a queue that has a consumer drawn: the publish with its delivery, or
+neither. Only steps made in full are in `hops`, so a cut never manufactures a call
+nothing answered or a publish nothing received. (A `broken` call is still a call
+nothing answered, because that is what it models.) When one span of budget is left,
+the next such step no longer fits and the walk stops there, so a cut run can end one
+span short of the budget. The note says which limit was hit and mentions a cycle only
+when the diagram has one, and `notTaken` reports the edges the run stopped short of as
+"not walked", distinct from edges no path reaches at all.
 
 **Labels become telemetry names, and are slugified on the way.** A queue label goes
 through the same slugifier as a service name, so `q[[orders.created]]` publishes to a

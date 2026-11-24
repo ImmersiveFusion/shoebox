@@ -48,8 +48,10 @@ public sealed class PodTracerPool : IDisposable
     /// </summary>
     public ActivitySource For(string serviceName, int instance, int? revision = null)
     {
-        var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
-        return _pods.GetOrAdd((serviceName, instanceId), key => new Lazy<PodEmitter>(() =>
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var key = (serviceName, Pod.InstanceIdOf(serviceName, instance, revision));
+        var pod = _pods.GetOrAdd(key, k => new Lazy<PodEmitter>(() =>
         {
             // The ActivitySource name is the instance id so each pod's provider can
             // subscribe to exactly its own spans and nobody else's. A pod name ends in
@@ -60,10 +62,33 @@ public sealed class PodTracerPool : IDisposable
             // The revision is not in the key because it is already in the instance
             // id: the template hash is drawn from it, so two revisions of a service
             // are two pods, each with its own service.version.
-            var source = new ActivitySource(key.InstanceId);
-            return new PodEmitter(source, BuildProvider(key.Service, key.InstanceId, source.Name, revision));
-        }, LazyThreadSafetyMode.ExecutionAndPublication)).Value.Source;
+            var source = new ActivitySource(k.Item2);
+            try
+            {
+                return new PodEmitter(source, BuildProvider(k.Item1, k.Item2, source.Name, revision));
+            }
+            catch
+            {
+                source.Dispose();
+                throw;
+            }
+        }, LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return pod.Value.Source;
+        }
+        catch
+        {
+            // A Lazy keeps the exception it was built with, so a pod that failed to
+            // build once would fail on every run after. Drop it, so the next run
+            // builds it again, the way the factory did before it was made Lazy.
+            _pods.TryRemove(new KeyValuePair<(string, string), Lazy<PodEmitter>>(key, pod));
+            throw;
+        }
     }
+
+    private volatile bool _disposed;
 
     /// <summary>
     /// The Resource one pod exports under, or null when that pod has not emitted yet.
@@ -113,6 +138,10 @@ public sealed class PodTracerPool : IDisposable
 
     public void Dispose()
     {
+        // No new pods after this; a For racing it throws rather than building a
+        // provider nothing will dispose.
+        _disposed = true;
+
         // Providers first, so each flushes what its source emitted, then the sources.
         foreach (var pod in _pods.Values.Where(p => p.IsValueCreated))
         {

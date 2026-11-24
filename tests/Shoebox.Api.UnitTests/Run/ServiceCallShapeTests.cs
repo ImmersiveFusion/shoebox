@@ -124,6 +124,98 @@ flowchart LR
         }
 
         [Test]
+        public void At_The_Budget_A_Queue_Is_Not_Published_Without_Its_Consumer()
+        {
+            // Entry SERVER plus 249 calls is 499 spans. A publish with a consumer
+            // drawn needs two; with one left the walk stops before publishing, rather
+            // than end on a publish nothing received, which reads as unconsumed.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i <= 249; i++) lines.Add($"  entry[Entry] --> s{i}[S{i}]");
+            lines.Add("  entry --> q[[Jobs]]");
+            lines.Add("  q --> w[Worker]");
+
+            using var pool = new PodTracerPool(target: null);
+            var (result, spans) = Fire(string.Join("\n", lines), pool);
+
+            result.SpanCount.Should().Be(RunLimits.MaxSpans - 1);
+            spans.Should().NotContain(s => s.Kind == ActivityKind.Producer);
+            result.Hops.Should().NotContain(h => h.To == "q" || h.To == "w");
+            result.NotTaken.Should().Contain(n => n.From == "entry" && n.To == "q" && n.Reason.StartsWith("not walked"));
+        }
+
+        [Test]
+        public void Past_The_Depth_Limit_A_Queue_Is_Not_Published_Without_Its_Consumer()
+        {
+            // s33 is at depth 32, so whatever consumes its publish would be at 33,
+            // past the limit: the publish is not emitted and is not a hop.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i <= 32; i++) lines.Add($"  s{i}[S{i}] --> s{i + 1}[S{i + 1}]");
+            lines.Add("  s33 --> q[[Jobs]]");
+            lines.Add("  q --> w[Worker]");
+
+            using var pool = new PodTracerPool(target: null);
+            var (result, spans) = Fire(string.Join("\n", lines), pool);
+
+            spans.Should().NotContain(s => s.Kind == ActivityKind.Producer);
+            result.Hops.Should().NotContain(h => h.To == "q" || h.To == "w");
+            result.Notes.Should().Contain(n => n.Contains($"depth {RunLimits.MaxDepth}"));
+            result.NotTaken.Should().Contain(n => n.From == "s33" && n.To == "q" && n.Reason.StartsWith("not walked"));
+        }
+
+        [Test]
+        public void A_Cut_Run_Says_It_Stopped_Not_That_There_Was_No_Path()
+        {
+            // An edge the run stopped short of is reachable; one out of a pod nothing
+            // arrives at is not. The two are reported differently.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i <= 260; i++) lines.Add($"  entry[Entry] --> s{i}[S{i}]");
+            lines.Add("  island[Island] --> elsewhere[Elsewhere]");
+            lines.Add("  other[Other] --> island");
+
+            using var pool = new PodTracerPool(target: null);
+            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
+
+            result.NotTaken.Should().Contain(n => n.To == "s260" && n.Reason.StartsWith("not walked"));
+            result.NotTaken.Should().NotContain(n => n.To == "s260" && n.Reason.StartsWith("never reached"));
+        }
+
+        [Test]
+        public void A_Whitespace_Shoebox_Id_Is_A_Shoebox_Of_Its_Own()
+        {
+            // The rate limiter treats any non-empty id as a shoebox; so does the namespace.
+            Pod.NamespaceOf(" ").Should().MatchRegex("^sb-[a-z0-9]{10}$");
+            Pod.NamespaceOf(" ").Should().NotBe(Pod.NamespaceOf("  "));
+            Pod.NamespaceOf("").Should().Be(Pod.DefaultNamespace);
+            Pod.NamespaceOf(null).Should().Be(Pod.DefaultNamespace);
+        }
+
+        [Test]
+        public void A_Cut_Never_Splits_A_Character()
+        {
+            // An emoji is two UTF-16 units; one straddling the cut is dropped whole.
+            var reason = new string('x', MermaidParser.MaxFailureReasonLength - 4) + "\U0001F525" + new string('y', 50);
+            var call = MermaidParser.Parse($"flowchart LR\n  a[A] -->|broken: {reason}| b[(B)]").Calls.Single();
+
+            call.FailureReason!.Length.Should().BeLessThanOrEqualTo(MermaidParser.MaxFailureReasonLength);
+            call.FailureReason.Should().EndWith("...");
+            call.FailureReason.Where(char.IsSurrogate).Count().Should().Be(0, "half an emoji is not left behind");
+        }
+
+        [Test]
+        public void Concurrent_Callers_Get_One_Pod_And_A_Disposed_Pool_Builds_No_More()
+        {
+            var pool = new PodTracerPool(target: null);
+            var sources = new System.Collections.Concurrent.ConcurrentBag<ActivitySource>();
+            Parallel.For(0, 64, _ => sources.Add(pool.For("orders-api", 1)));
+
+            sources.Distinct().Should().ContainSingle("every caller gets the one source of the one pod");
+
+            pool.Dispose();
+            var after = () => pool.For("orders-api", 2);
+            after.Should().Throw<ObjectDisposedException>();
+        }
+
+        [Test]
         public void A_Long_Failure_Reason_Is_Cut_Before_It_Is_Copied_Onto_Spans()
         {
             var reason = new string('x', 5000);

@@ -83,8 +83,15 @@ public sealed record Pod(
     /// hashed, not used as written: the id is any string a client sends, a namespace
     /// is a DNS label, and the hash also keeps the id itself out of the address.
     /// </summary>
+    /// <remarks>
+    /// Empty means no shoebox, as it does to the rate limiter; any other id, even
+    /// one that is only whitespace, is a shoebox of its own, so the two never
+    /// disagree about whose runs are whose. The namespace is exactly as private as
+    /// the id: anyone holding a shoebox's share link holds its id, shares its
+    /// namespace, and is meant to, since a share link shares the shoebox.
+    /// </remarks>
     public static string NamespaceOf(string? shoeboxId) =>
-        string.IsNullOrWhiteSpace(shoeboxId)
+        string.IsNullOrEmpty(shoeboxId)
             ? DefaultNamespace
             : $"sb-{SafeEncode($"ns|{shoeboxId}", NamespaceHashLength)}";
 

@@ -428,7 +428,11 @@ public static partial class MermaidParser
             // longer is cut, and the cut is marked.
             if (reason.Length > MaxFailureReasonLength)
             {
-                reason = reason[..(MaxFailureReasonLength - 3)].TrimEnd() + "...";
+                // Never between the two halves of a surrogate pair, which would
+                // leave half a character for the exporter to replace.
+                var cut = MaxFailureReasonLength - 3;
+                if (char.IsHighSurrogate(reason[cut - 1])) cut--;
+                reason = reason[..cut].TrimEnd() + "...";
             }
         }
 

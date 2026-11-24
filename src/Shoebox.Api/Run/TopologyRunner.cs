@@ -145,9 +145,43 @@ public sealed class TopologyRunner
         var accounted = new HashSet<string>(crossed, StringComparer.Ordinal);
         foreach (var edge in declined) accounted.Add($"{edge.From}->{edge.To}");
 
+        var rest = graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}")).ToList();
+        if (!state.Exhausted && !state.DepthLimited)
+        {
+            return declined.Concat(Unreached(rest)).ToList();
+        }
+
+        // A run cut at a limit did not walk everything it could reach, and saying
+        // "no path arrives" about those edges would be false: there is a path, the
+        // run stopped before it. Only edges out of pods the entry cannot reach at
+        // all are unreachable.
+        var reachable = Reachable(graph);
+        var stoppedAt = state.Exhausted
+            ? $"not walked: the run stopped at its budget of {RunLimits.MaxSpans} spans before reaching this edge"
+            : $"not walked: the run stopped at depth {RunLimits.MaxDepth} before reaching this edge";
+
         return declined
-            .Concat(Unreached(graph.Calls.Where(c => !accounted.Contains($"{c.FromId}->{c.ToId}"))))
+            .Concat(rest.Where(c => reachable.Contains(c.FromId)).Select(c => new NotTaken(c.FromId, c.ToId, stoppedAt)))
+            .Concat(Unreached(rest.Where(c => !reachable.Contains(c.FromId))))
             .ToList();
+    }
+
+    /// <summary>Every pod a path from the entry point can arrive at, the entry included.</summary>
+    private static HashSet<string> Reachable(Graph graph)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (graph.Entry is not { } entry) return seen;
+
+        var pending = new Stack<string>();
+        pending.Push(entry.Id);
+        while (pending.Count > 0)
+        {
+            var id = pending.Pop();
+            if (!seen.Add(id)) continue;
+            foreach (var call in graph.From(id)) pending.Push(call.ToId);
+        }
+
+        return seen;
     }
 
     /// <summary>
@@ -225,6 +259,7 @@ public sealed class TopologyRunner
             // NoteOnce, not Note. This fired on every branch that reached the
             // limit, so a looping diagram did not produce "a note about a cycle",
             // it produced thousands of identical copies of one.
+            state.DepthLimited = true;
             state.NoteOnce(DepthNote(graph));
             return null;
         }
@@ -388,7 +423,7 @@ public sealed class TopologyRunner
                     continue;
                 }
 
-                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
+                // The hop is recorded inside, once the publish is known to fit.
                 PublishAndDeliver(graph, pod, target, graph.From(target.Id).ToList(), activity, state, depth, instance);
                 state.Leave(target.Id);
                 continue;
@@ -469,6 +504,7 @@ public sealed class TopologyRunner
         // so the call is not emitted either.
         if (depth + 1 > RunLimits.MaxDepth)
         {
+            state.DepthLimited = true;
             state.NoteOnce(DepthNote(graph));
             return null;
         }
@@ -502,7 +538,8 @@ public sealed class TopologyRunner
 
         // DeclaredFullSampler records every span, so client is not null in practice;
         // this guards it like every other span in this walk. If it ever were, the
-        // callee would hang under the caller's own span rather than start a trace.
+        // callee would hang where the CLIENT span would have, under the caller's
+        // own span, which every service call has: Visit always passes its own.
         var why = Visit(graph, callee, client ?? parent, state, depth + 1);
         if (client is not null)
         {
@@ -565,6 +602,30 @@ public sealed class TopologyRunner
         // Deterministic: the same diagram and run index produce the same id, so a
         // shared link is still a runnable repro.
         var messageId = $"{queue.ServiceName}-{state.RunIndex}";
+
+        // The same whole-step rule as a call between services. A queue with a
+        // consumer drawn is published and received together or not at all: cut
+        // between the two, the run would end on a publish nothing received, which
+        // reads as an unconsumed destination, a phantom the diagram does not have.
+        // A queue drawn with no consumer is the publish alone and needs one span.
+        if (consumers.Count > 0)
+        {
+            if (RunLimits.MaxSpans - state.SpanCount < 2)
+            {
+                state.Stop();
+                state.NoteOnce(BudgetNote(graph));
+                return;
+            }
+
+            if (depth + 1 > RunLimits.MaxDepth)
+            {
+                state.DepthLimited = true;
+                state.NoteOnce(DepthNote(graph));
+                return;
+            }
+        }
+
+        state.Hop(producer.Id, queue.Id, failed: false, ms: queue.DefaultLatencyMs);
 
         var source = _pool.For(producer.ServiceName, instance, producer.Revision);
         using var publish = source.StartActivity(
@@ -873,7 +934,9 @@ public sealed class TopologyRunner
                 if (kind == ActivityKind.Server)
                 {
                     yield return new("http.route", pod.Route);
-                    yield return new("server.address", host ?? pod.HostIn(Pod.DefaultNamespace));
+                    // Required, never defaulted: a SERVER span in the wrong namespace
+                    // answers on a host its caller did not dial.
+                    yield return new("server.address", host ?? throw new ArgumentNullException(nameof(host), "A SERVER span needs the host its caller dialled."));
                     yield return new("server.port", Pod.ServicePort);
                 }
 
@@ -927,6 +990,9 @@ public sealed class TopologyRunner
         /// call, so every loop that checks <see cref="Exhausted"/> stops too.
         /// </summary>
         public void Stop() => _stopped = true;
+
+        /// <summary>Whether some path was cut at the depth limit, so not every reachable edge was walked.</summary>
+        public bool DepthLimited { get; set; }
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and
