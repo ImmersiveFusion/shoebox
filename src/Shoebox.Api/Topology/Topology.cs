@@ -61,18 +61,21 @@ public sealed record Pod(
     /// <summary>
     /// A Kubernetes Service DNS name for a node id: <c>{id}.default.svc.cluster.local</c>.
     ///
-    /// A DNS label is lowercase letters, digits and hyphens. An id that fits already
-    /// is used as it is. Any other id is reduced to one and given a short suffix
-    /// hashed from the id as written, because Mermaid ids are case sensitive and
-    /// <c>Api</c> and <c>api</c> are two nodes; folding them onto one host would
-    /// make two services one address, which is exactly the false rename this exists
-    /// to avoid.
+    /// A DNS label is at most 63 lowercase letters, digits and single hyphens. An id
+    /// that is one already is used as it is. Any other id is reduced to one, cut to
+    /// leave room, and given a short suffix hashed from the id as written, because
+    /// Mermaid ids are case sensitive and <c>Api</c> and <c>api</c> are two nodes;
+    /// folding them onto one host would make two services one address, which is
+    /// exactly the false rename this exists to avoid.
     /// </summary>
     public static string HostOf(string nodeId)
     {
-        var label = DnsLabel(nodeId);
-        if (!string.Equals(label, nodeId, StringComparison.Ordinal))
+        var label = Reduce(nodeId);
+        if (!string.Equals(label, nodeId, StringComparison.Ordinal) || label.Length > MaxDnsLabel)
         {
+            var room = MaxDnsLabel - HostSuffixLength - 1;
+            if (label.Length > room) label = label[..room].TrimEnd('-');
+            if (label.Length == 0) label = "svc";
             label = $"{label}-{SafeEncode($"host|{nodeId}", HostSuffixLength)}";
         }
 
@@ -81,18 +84,16 @@ public sealed record Pod(
 
     private const int HostSuffixLength = 5;
 
-    private const int MaxDnsLabel = 63 - HostSuffixLength - 1;
+    private const int MaxDnsLabel = 63;
 
-    private static string DnsLabel(string nodeId)
+    private static string Reduce(string nodeId)
     {
         var chars = nodeId.ToLowerInvariant()
             .Select(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' ? c : '-')
             .ToArray();
         var label = new string(chars);
         while (label.Contains("--", StringComparison.Ordinal)) label = label.Replace("--", "-", StringComparison.Ordinal);
-        label = label.Trim('-');
-        if (label.Length > MaxDnsLabel) label = label[..MaxDnsLabel].TrimEnd('-');
-        return label.Length == 0 ? "svc" : label;
+        return label.Trim('-');
     }
 
     /// <summary>

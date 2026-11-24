@@ -23,6 +23,7 @@ namespace Shoebox.Api.Emit;
 public sealed class PodTracerPool : IDisposable
 {
     private readonly ConcurrentDictionary<(string Service, string InstanceId), ActivitySource> _sources = new();
+    private readonly ConcurrentDictionary<(string Service, string InstanceId), Resource> _resources = new();
     private readonly List<TracerProvider> _providers = new();
     private readonly object _gate = new();
     private readonly string _hostName = Environment.MachineName;
@@ -64,13 +65,11 @@ public sealed class PodTracerPool : IDisposable
     /// Resource attributes (service.name, service.version, service.instance.id) ride
     /// the export, not the span, so this is the only place they can be read back.
     /// </summary>
-    public Resource? ResourceOf(string serviceName, int instance, int? revision = null)
+    internal Resource? ResourceOf(string serviceName, int instance, int? revision = null)
     {
         var instanceId = Pod.InstanceIdOf(serviceName, instance, revision);
         return _resources.TryGetValue((serviceName, instanceId), out var resource) ? resource : null;
     }
-
-    private readonly ConcurrentDictionary<(string Service, string InstanceId), Resource> _resources = new();
 
     private TracerProvider BuildProvider(string serviceName, string instanceId, string sourceName, int? revision)
     {
@@ -116,6 +115,8 @@ public sealed class PodTracerPool : IDisposable
 
             _providers.Clear();
         }
+
+        _resources.Clear();
 
         foreach (var source in _sources.Values)
         {

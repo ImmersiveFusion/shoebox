@@ -145,23 +145,50 @@ flowchart LR
             // Every span of the run, reduced to its shape with the renamed service's
             // name masked: kind, name, parent's position, and every attribute. Only
             // service.name may differ.
+            // service.instance.id is masked the same way: a pod is named after its
+            // service, so its name moves with the rename, and only that part may.
             static List<string> Shape(List<Activity> spans, string renamed)
             {
-                var order = spans.OrderBy(s => s.StartTimeUtc).ThenBy(s => s.Kind).ThenBy(s => s.DisplayName, StringComparer.Ordinal).ToList();
+                string Mask(object? value) => (value?.ToString() ?? "").Replace(renamed, "RENAMED");
+
+                // Ordered by everything except the raw names, so the order itself
+                // cannot differ just because the renamed name sorts differently.
+                var order = spans
+                    .OrderBy(s => s.StartTimeUtc)
+                    .ThenBy(s => s.Kind)
+                    .ThenBy(s => Mask(s.DisplayName), StringComparer.Ordinal)
+                    .ThenBy(s => Mask(s.GetTagItem("server.address") ?? s.GetTagItem("messaging.destination.name")), StringComparer.Ordinal)
+                    .ToList();
                 var index = order.Select((s, i) => (s.SpanId, i)).ToDictionary(p => p.SpanId, p => p.i);
                 return order.Select(s =>
                 {
-                    var service = ServiceOf(s) == renamed ? "RENAMED" : ServiceOf(s);
                     var parent = s.ParentSpanId == default ? -1 : index[s.ParentSpanId];
+                    // A pod name hashes its service's name, so the renamed service's
+                    // pods are wholly new names; that is checked on its own below.
                     var tags = string.Join(";", s.TagObjects
-                        .Where(t => t.Key != "service.instance.id")
                         .OrderBy(t => t.Key, StringComparer.Ordinal)
-                        .Select(t => $"{t.Key}={t.Value}"));
-                    return $"{service}|{s.Kind}|{s.DisplayName.Replace(renamed, "RENAMED")}|{parent}|{s.Status}|{tags}";
+                        .Select(t => t.Key == "service.instance.id" && Mask(t.Value).StartsWith("RENAMED-")
+                            ? $"{t.Key}=RENAMED-POD"
+                            : $"{t.Key}={Mask(t.Value)}"));
+                    return $"{Mask(ServiceOf(s))}|{s.Kind}|{Mask(s.DisplayName)}|{parent}|{s.Status}|{tags}";
                 }).ToList();
             }
 
-            Shape(Capture(After), "orders-service").Should().Equal(Shape(Capture(Before), "orders-api"));
+            var before = Capture(Before);
+            var after = Capture(After);
+            Shape(after, "orders-service").Should().Equal(Shape(before, "orders-api"));
+
+            // And the pod names did move with it: the renamed service's pods are new
+            // names, every other service's pods are the same ones.
+            static IEnumerable<string> Pods(List<Activity> spans, Func<string, bool> which) => spans
+                .Where(s => which(ServiceOf(s)) && s.GetTagItem("service.instance.id") is not null)
+                .Select(s => (string)s.GetTagItem("service.instance.id")!)
+                .Distinct()
+                .OrderBy(x => x, StringComparer.Ordinal);
+
+            Pods(after, s => s == "orders-service").Should().OnlyContain(p => p.StartsWith("orders-service-"))
+                .And.NotIntersectWith(Pods(before, s => s == "orders-api"));
+            Pods(after, s => s != "orders-service").Should().Equal(Pods(before, s => s != "orders-api"));
         }
 
         [Test]
@@ -302,16 +329,40 @@ flowchart LR
                 .Should().BeEquivalentTo(new object[] { Pod.HostOf("w1"), Pod.HostOf("w2") });
         }
 
-        [TestCase(63)]
+        [Test]
+        public void A_Valid_Dns_Label_Of_63_Characters_Is_Used_As_It_Is()
+        {
+            var id = new string('a', 63);
+            Pod.HostOf(id).Should().Be($"{id}.default.svc.cluster.local");
+        }
+
         [TestCase(64)]
-        public void An_Id_At_The_Dns_Limit_Still_Makes_A_Valid_Label(int length)
+        [TestCase(200)]
+        public void A_Longer_Id_Is_Cut_And_Suffixed_Into_A_Valid_Label(int length)
         {
             var id = new string('a', length);
             var label = Pod.HostOf(id).Split('.')[0];
 
             label.Length.Should().BeLessThanOrEqualTo(63);
             System.Text.RegularExpressions.Regex.IsMatch(label, "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").Should().BeTrue();
-            Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', length - 1)), "a cut id must not collide with a shorter one");
+            Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', 63)), "a cut id must not collide with one that fits");
+            Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', length + 1)), "two cut ids must not collide");
+        }
+
+        [Test]
+        public void A_Run_That_Reaches_The_Budget_Without_A_Cycle_Does_Not_Blame_One()
+        {
+            // Wide, not cyclic: one entry calling 300 services is 601 spans.
+            var lines = new List<string> { "flowchart LR" };
+            for (var i = 1; i <= 300; i++) lines.Add($"  entry[Entry] --> s{i}[S{i}]");
+
+            using var pool = new PodTracerPool(target: null);
+            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
+
+            result.SpanCount.Should().BeLessThanOrEqualTo(RunLimits.MaxSpans);
+            result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"))
+                .And.NotContain(n => n.Contains("cycle"), "this diagram has none");
+            result.Hops.Should().HaveCount((RunLimits.MaxSpans - 1) / 2, "a hop is recorded only for a call that was emitted");
         }
 
         [Test]
@@ -344,11 +395,14 @@ flowchart LR
 
                 result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"), $"a {size}-node mesh must reach the cap");
                 result.SpanCount.Should().BeLessThanOrEqualTo(RunLimits.MaxSpans);
-                foreach (var call in spans.Where(s => s.Kind == ActivityKind.Client && s.GetTagItem("url.full") is not null))
+                var calls = spans.Where(s => s.Kind == ActivityKind.Client && s.GetTagItem("url.full") is not null).ToList();
+                foreach (var call in calls)
                 {
                     spans.Should().Contain(s => s.ParentSpanId == call.SpanId && s.Kind == ActivityKind.Server,
                         $"every call is answered, even in a {size}-node run cut at the cap");
                 }
+
+                result.Hops.Should().HaveCount(calls.Count, "the client replays hops as the path taken, so each is an emitted call");
             }
         }
 

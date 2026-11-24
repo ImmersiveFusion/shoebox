@@ -216,11 +216,17 @@ public sealed class TopologyRunner
         // reached and never would have been.
         if (state.Exhausted)
         {
-            state.NoteOnce(
-                $"Walk stopped at {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
-                "the request kept arriving back where it started and this run is a truncated " +
-                "prefix of an unbounded one rather than a picture of the system. " +
-                "Nothing below this point ran, and the hops and timings above it are still real.");
+            // The cycle explanation only where there is a cycle. A large acyclic
+            // diagram can reach the budget too, and blaming a loop it does not have
+            // sends the person looking for the wrong thing.
+            state.NoteOnce(graph.CyclicPods.Count > 0
+                ? $"Walk stopped at {RunLimits.MaxSpans} spans. The diagram contains a cycle, so " +
+                  "the request kept arriving back where it started and this run is a truncated " +
+                  "prefix of an unbounded one rather than a picture of the system. " +
+                  "Nothing below this point ran, and the hops and timings above it are still real."
+                : $"Walk stopped at {RunLimits.MaxSpans} spans. One request through this diagram " +
+                  "makes more spans than a run emits, so this run is a truncated prefix of it. " +
+                  "Nothing below this point ran, and the hops and timings above it are still real.");
             return null;
         }
 
@@ -359,7 +365,6 @@ public sealed class TopologyRunner
                     continue;
                 }
 
-                state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
                 if (CallService(graph, pod, instance, target, activity, state, depth) is { } phantomWhy) Fail(phantomWhy);
                 state.Leave(target.Id);
                 continue;
@@ -425,7 +430,6 @@ public sealed class TopologyRunner
                 continue;
             }
 
-            state.Hop(pod.Id, target.Id, failed: false, ms: target.DefaultLatencyMs);
             if (CallService(graph, pod, instance, target, activity, state, depth) is { } why) Fail(why);
             state.Leave(target.Id);
         }
@@ -457,12 +461,19 @@ public sealed class TopologyRunner
         // left, the CLIENT half alone would be a call dialling a host nothing
         // answers on, which is exactly what reads as a peer nobody has seen. The
         // run stops here instead, and Visit writes the usual note about why.
-        if (RunLimits.MaxSpans - state.SpanCount < 2)
+        //
+        // The depth limit is the same case: past it Visit returns before the callee
+        // answers, so the call is not emitted either, and Visit notes the limit.
+        if (RunLimits.MaxSpans - state.SpanCount < 2 || depth + 1 > RunLimits.MaxDepth)
         {
-            state.Stop();
+            if (depth + 1 <= RunLimits.MaxDepth) state.Stop();
             _ = Visit(graph, callee, parent, state, depth + 1);
             return null;
         }
+
+        // Recorded here, after the budget check, so a hop is only ever a call that
+        // was emitted: the client replays hops as the path the request took.
+        state.Hop(caller.Id, callee.Id, failed: false, ms: callee.DefaultLatencyMs);
 
         var source = _pool.For(caller.ServiceName, callerInstance, caller.Revision);
         using var client = source.StartActivity(
