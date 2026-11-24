@@ -70,7 +70,7 @@ public sealed class TopologyRunner
                 Array.Empty<Hop>(), Unreached(graph.Calls));
         }
 
-        if (!string.IsNullOrWhiteSpace(shoeboxId))
+        if (!string.IsNullOrEmpty(shoeboxId))
         {
             // shoebox.id rides Baggage onto every span, which is also a live
             // demonstration of baggage propagation inside a tool whose job is

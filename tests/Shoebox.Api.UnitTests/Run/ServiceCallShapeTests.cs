@@ -309,6 +309,55 @@ flowchart LR
         }
 
         [Test]
+        public void A_Staged_Rename_Hands_Over_In_Time_Not_Only_In_Order()
+        {
+            // The ground truth for a staged rename is old label, new label, time.
+            // Fired as the timer fires them, the old name's last span ends before
+            // the new name's first span starts: the handover is a moment, not an
+            // overlap, which is what lets anything reading the spans put the
+            // rename at the edit.
+            //
+            // A run's spans are timed by the model, so a run lasts as long as its
+            // modelled latencies add up to, starting from when it was fired. Fired
+            // faster than that, runs overlap in time; the timer's slowest gap
+            // between runs is seconds, far longer than any run here. The test
+            // fires at a gap longer than one run's modelled length, as the timer does.
+            using var pool = new PodTracerPool(target: null);
+            var spans = new List<Activity>();
+            for (var run = 1; run <= 6; run++)
+            {
+                var fired = CaptureWith(run <= 3 ? Before : After, pool, run);
+                spans.AddRange(fired);
+                var runLength = fired.Max(s => s.StartTimeUtc + s.Duration) - fired.Min(s => s.StartTimeUtc);
+                Thread.Sleep(runLength + TimeSpan.FromMilliseconds(20));
+            }
+
+            var oldLast = spans.Where(s => ServiceOf(s) == "orders-api").Max(s => s.StartTimeUtc + s.Duration);
+            var newFirst = spans.Where(s => ServiceOf(s) == "orders-service").Min(s => s.StartTimeUtc);
+
+            newFirst.Should().BeAfter(oldLast, "the new name starts after the old one has stopped");
+        }
+
+        [Test]
+        public void A_Whitespace_Shoebox_Id_Is_Carried_On_Its_Spans_Too()
+        {
+            // The namespace treats " " as a shoebox, so the spans say which one.
+            using var pool = new PodTracerPool(target: null);
+            var captured = new List<Activity>();
+            using var listener = new ActivityListener
+            {
+                ShouldListenTo = _ => true,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                ActivityStopped = captured.Add,
+            };
+            ActivitySource.AddActivityListener(listener);
+            var result = new TopologyRunner(pool).Run(MermaidParser.Parse(Before), 1, " ");
+
+            captured.Where(s => s.TraceId.ToString() == result.TraceId)
+                .Should().OnlyContain(s => (string?)s.GetTagItem("shoebox.id") == " ");
+        }
+
+        [Test]
         public void A_Relabel_Keeps_The_Same_Callers_And_Dependencies()
         {
             // What a rename detector compares besides the address: who calls the

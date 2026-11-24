@@ -230,7 +230,9 @@ be called directly: a service reached only through a queue answers with a CONSUM
 span, which has no address, so relabelling it cannot read as a rename. Keep the same
 shoebox for the whole staging, since a new shoebox is a new namespace, and fire from one
 tab at a steady pace (every 5 to 10 seconds): a gap from a second tab or a rate limit
-can make the old name look quiet before the edit. A relabel alone does not change
+can make the old name look quiet before the edit. A run's spans last as long as its
+modelled latencies add up to, well under a second, so at that pace the old name's
+last span ends before the new name's first one starts. A relabel alone does not change
 `service.version`; the new name starts at the version its rev marker says, so bump the
 rev in a separate step if a redeploy is what you want to show.
 

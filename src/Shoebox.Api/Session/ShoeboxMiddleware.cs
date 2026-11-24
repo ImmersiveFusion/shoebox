@@ -8,7 +8,7 @@ public class ShoeboxMiddleware : IMiddleware
     public Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
         var shoeboxId = context.Request.GetShoeboxId();
-        if (string.IsNullOrWhiteSpace(shoeboxId))
+        if (string.IsNullOrEmpty(shoeboxId))
         {
             return next(context);
         }
