@@ -176,15 +176,23 @@ or recommends in the OpenTelemetry conventions, and nothing else:
 
 Both also carry `shoebox.id`, `service.instance.id` (the pod that emitted the span)
 and `shoebox.pod.kind`. On the SERVER span that is the pod's own kind; on the CLIENT
-span it is the kind of what was called, as on the calls to a database or a cache. The host comes from the node id, never the label, the way a
-Kubernetes Service keeps its DNS name: node `api` answers on
-`api.default.svc.cluster.local`, route `/api`. An id that is already a DNS label (up
-to 63 lowercase letters, digits and single hyphens) is used as it is. Any other id
-(`Api`, `order_api`, or a longer one) is lowercased, cut to fit if needed, and given a
-five-character suffix hashed from the id as written, so `Api` and `api` get different
-hosts. Two ids share a host only if one is literally written as the other's suffixed
-form, or two suffixed ids draw the same hash, about one chance in fourteen million.
-The route is the host's first label, suffix included.
+span it is the kind of what was called, as on the calls to a database or a cache.
+
+The host comes from the node id, never the label, the way a Kubernetes Service keeps
+its DNS name: node `api` answers on `api.{namespace}.svc.cluster.local`, route
+`/api`. The namespace is the shoebox's: `sb-` and a hash of its id, or `default` for a
+run with no shoebox. Everybody draws a node called `api`, so without it two visitors
+sending to one backend would answer on the same address, and one of them relabelling
+theirs would look like a rename of the other's. The shoebox id stays in the page's
+address, so a reload keeps the namespace, and a new shoebox is a new one.
+
+An id that is already a DNS label (up to 63 lowercase letters, digits and single
+hyphens) is used as it is. Any other id (`Api`, `order_api`, or a longer one) is
+lowercased, cut to fit if needed, and given an eight-character suffix hashed from the
+id as written, so `Api` and `api` get different hosts. Within one diagram two ids can
+share a host only if one is literally written as the other's suffixed form, or two
+suffixed ids draw the same of about 282 billion suffixes. The route is the host's first
+label, suffix included, and is the same in every namespace.
 
 So keep the id and change the label, and the service is renamed: the old
 `service.name` goes quiet, and a new one starts on the same address, with the same
@@ -209,7 +217,10 @@ An address alone does not make two names one service: a shared ingress or a reus
 host would merge things that are different. So a rename is usually recognised by
 several things together, among them that the same callers moved from the old name to
 the new one. The entry point has no callers to compare, so to stage a rename, rename
-a service something calls, and put a caller in front of it if nothing does.
+a service something calls, and put a caller in front of it if nothing does. It has to
+be called directly: a service reached only through a queue answers with a CONSUMER
+span, which has no address, so relabelling it cannot read as a rename. Keep the same
+shoebox for the whole staging, since a new shoebox is a new namespace.
 
 Datastores, caches, third parties and queues are named by their labels as before,
 and a call that fails outright (`broken`) is emitted as before, with no address.
@@ -240,15 +251,14 @@ anyway.
 There is a 500-span budget behind all of this, and it is a backstop rather than the
 mechanism: path enumeration is factorial in the worst case, so a pathological mesh
 can still be stopped. An honest diagram never reaches it. The Azure reference
-architecture that first exposed all of this comes out at 44 spans.
+architecture that first exposed all of this comes out at 57 spans.
 
 A run cut by the budget, or by the depth limit of 32 calls, is cut at whole calls. A
 call between services is emitted with both its spans or not at all, and only calls
-made in full are in `hops`, so a cut run never shows a call nothing answered. With one
-span of budget left, a call between services no longer fits and is skipped, while a
-one-span step such as a database call still runs, so a cut run can end a span or so
-short of the budget. The note says which limit was hit, and mentions a cycle only when
-the diagram has one.
+made in full are in `hops`, so a cut run never shows a call nothing answered. When one
+span of budget is left, the next call between services no longer fits and the walk
+stops there, so a cut run can end one span short of the budget. The note says which
+limit was hit, and mentions a cycle only when the diagram has one.
 
 **Labels become telemetry names, and are slugified on the way.** A queue label goes
 through the same slugifier as a service name, so `q[[orders.created]]` publishes to a
@@ -388,11 +398,12 @@ because it is the way around the run limit.
 
 These numbers are priced against emission. A run used to be unbounded (one was
 measured at 23,428 spans), which made this table the only ceiling on what the shared
-backend received. A run is now capped at 500 spans and typically emits twenty to forty.
+backend received. A run is now capped at 500 spans. A shipped example emits 6 to 9, and
+the Azure reference architecture 57, since a call between services is two spans.
 Twelve a minute is one run every five seconds, the fastest [timed firing](#timed-firing)
 goes, and the address layer holds the same twelve so extra shoeboxes buy a bigger burst
-and nothing more sustained. An hour flat out from one address is 760 runs: about 33,000
-spans at a typical run, and 380,000 if every run hit the cap. That ceiling is higher
+and nothing more sustained. An hour flat out from one address is 760 runs: about 43,000
+spans at the Azure diagram's 57, and 380,000 if every run hit the cap. That ceiling is higher
 than it was at two a minute, and it is the price of letting the page fire on a timer.
 
 This is politeness enforcement, not abuse defence. A distributed slam is a job for the

@@ -394,6 +394,9 @@ public static partial class MermaidParser
         return null;
     }
 
+    /// <summary>The longest failure reason kept from a <c>broken: ...</c> label.</summary>
+    public const int MaxFailureReasonLength = 256;
+
     private static Call BuildCall(string from, string to, string? label)
     {
         var call = new Call(from, to);
@@ -418,6 +421,15 @@ public static partial class MermaidParser
         {
             reason = rest[(colon + 1)..].Trim();
             rest = rest[..colon].Trim();
+
+            // The reason becomes a span status description on every span a failure
+            // climbs through, both halves of each call, so a long one is copied tens
+            // of times into one export. A status says what broke in a line; anything
+            // longer is cut, and the cut is marked.
+            if (reason.Length > MaxFailureReasonLength)
+            {
+                reason = reason[..(MaxFailureReasonLength - 3)].TrimEnd() + "...";
+            }
         }
 
         // "on #3,#5"

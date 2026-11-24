@@ -40,14 +40,17 @@ builder.Services.AddHttpContextAccessor();
 // of a run changed. Before the cycle fix a single run was unbounded and one was
 // measured at 23,428 spans, which made this limiter the only ceiling on what the
 // shared backend received; a burst of five could put ~117,000 spans in it in
-// seconds. A run is now capped at RunLimits.MaxSpans and typically emits 20-44.
+// seconds. A run is now capped at RunLimits.MaxSpans. Since a call between two
+// services became two spans (the caller's CLIENT and the callee's SERVER), a
+// shipped example emits 6 to 9 and the Azure reference architecture 57, where it
+// was 44; the cap did not move, so the ceiling below did not either.
 //
 // Twelve a minute is one run every five seconds, the fastest the page's timed
 // firing goes. At the old two a minute the burst ran out in about two minutes
 // and every tick after that was a 429. The address layer is held to the same
 // twelve, so minting more shoeboxes buys a bigger burst and nothing more
 // sustained. An hour flat out from one address is 40 + 720 = 760 runs: about
-// 33,000 spans at a typical 44, and 380,000 if every run hit MaxSpans, which no
+// 43,000 spans at the Azure diagram's 57, and 380,000 if every run hit MaxSpans, which no
 // shipped example comes near. That ceiling is higher than the old one, and it
 // is the price of letting a page fire on a timer at all.
 //

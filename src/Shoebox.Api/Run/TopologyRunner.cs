@@ -91,7 +91,7 @@ public sealed class TopologyRunner
         // too and not just in the picture.
         var ambient = Activity.Current;
         Activity.Current = null;
-        var state = new RunState(runIndex);
+        var state = new RunState(runIndex) { Namespace = Pod.NamespaceOf(shoeboxId) };
         try
         {
             // The entry pod is on the path before the walk starts, or a diagram
@@ -284,7 +284,7 @@ public sealed class TopologyRunner
             }
             else
             {
-                foreach (var (k, v) in SemanticTags(pod, kind)) activity.SetTag(k, v);
+                foreach (var (k, v) in SemanticTags(pod, kind, host: pod.HostIn(state.Namespace))) activity.SetTag(k, v);
             }
         }
 
@@ -441,7 +441,7 @@ public sealed class TopologyRunner
     /// telemetry can learn where a service answers: a SERVER span's own
     /// <c>server.address</c>, matched to the host its caller dialled.
     ///
-    /// The address is the callee's node id (<see cref="Pod.Host"/>), so it survives a
+    /// The address is the callee's node id in this shoebox's namespace (<see cref="Pod.HostIn"/>), so it survives a
     /// relabel. The dialled host and the answering host are one value, written by
     /// both sides of the same call, so no address appears that nothing answers on:
     /// an address with no answer reads as a peer nobody has seen.
@@ -451,12 +451,16 @@ public sealed class TopologyRunner
     {
         // A call is two spans, and both fit or neither is emitted. With one slot
         // left, the CLIENT half alone would be a call dialling a host nothing
-        // answers on, which is exactly what reads as a peer nobody has seen. Only
-        // this call is skipped: a sibling that is one span (a database, a cache, a
-        // publish) still fits and still runs, and the budget note says the walk
-        // was cut.
+        // answers on, which is exactly what reads as a peer nobody has seen. So the
+        // walk stops here, as it does at the budget itself.
+        //
+        // Stopping, not skipping only this call: a skip leaves the count at 499,
+        // where the budget never trips, and the walk then keeps visiting every
+        // remaining edge of a diagram anybody can paste. A one-span sibling that
+        // would still have fit is the price of a walk that is bounded.
         if (RunLimits.MaxSpans - state.SpanCount < 2)
         {
+            state.Stop();
             state.NoteOnce(BudgetNote(graph));
             return null;
         }
@@ -490,9 +494,10 @@ public sealed class TopologyRunner
             // dependency calls (EmitDependencyCall); on a pod's own span it names the pod.
             client.SetTag("shoebox.pod.kind", callee.Kind.ToString().ToLowerInvariant());
             client.SetTag("http.request.method", "GET");
-            client.SetTag("server.address", callee.Host);
+            var host = callee.HostIn(state.Namespace);
+            client.SetTag("server.address", host);
             client.SetTag("server.port", Pod.ServicePort);
-            client.SetTag("url.full", $"http://{callee.Host}:{Pod.ServicePort}{callee.Route}");
+            client.SetTag("url.full", $"http://{host}:{Pod.ServicePort}{callee.Route}");
         }
 
         // DeclaredFullSampler records every span, so client is not null in practice;
@@ -815,7 +820,7 @@ public sealed class TopologyRunner
     /// a convention to get semantically correct telemetry out.
     /// </summary>
     private static IEnumerable<KeyValuePair<string, object?>> SemanticTags(
-        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null)
+        Pod pod, ActivityKind kind, Pod? caller = null, string? failure = null, string? host = null)
     {
         yield return new("shoebox.pod.kind", pod.Kind.ToString().ToLowerInvariant());
 
@@ -868,7 +873,7 @@ public sealed class TopologyRunner
                 if (kind == ActivityKind.Server)
                 {
                     yield return new("http.route", pod.Route);
-                    yield return new("server.address", pod.Host);
+                    yield return new("server.address", host ?? pod.HostIn(Pod.DefaultNamespace));
                     yield return new("server.port", Pod.ServicePort);
                 }
 
@@ -879,6 +884,9 @@ public sealed class TopologyRunner
     private sealed class RunState(int runIndex)
     {
         public int RunIndex { get; } = runIndex;
+
+        /// <summary>The shoebox's namespace, so its services answer on addresses of their own.</summary>
+        public string Namespace { get; init; } = Pod.DefaultNamespace;
 
         /// <summary>Modelled time, not wall clock. Advanced by each pod's latency.</summary>
         public DateTimeOffset Clock { get; set; } = DateTimeOffset.UtcNow;
@@ -910,7 +918,15 @@ public sealed class TopologyRunner
         /// Whether this run has spent its span budget. See <see cref="RunLimits"/>
         /// for why the budget rather than the depth limit is the real bound.
         /// </summary>
-        public bool Exhausted => SpanCount >= RunLimits.MaxSpans;
+        public bool Exhausted => _stopped || SpanCount >= RunLimits.MaxSpans;
+
+        private bool _stopped;
+
+        /// <summary>
+        /// Ends the walk when what is left of the budget cannot hold the next whole
+        /// call, so every loop that checks <see cref="Exhausted"/> stops too.
+        /// </summary>
+        public void Stop() => _stopped = true;
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and

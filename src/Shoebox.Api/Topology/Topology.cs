@@ -43,8 +43,8 @@ public sealed record Pod(
     public string InstanceId(int instance) => InstanceIdOf(ServiceName, instance, Revision);
 
     /// <summary>
-    /// The address a service answers on: <c>server.address</c> on its own SERVER spans
-    /// and on its callers' CLIENT spans.
+    /// The address a service answers on in one shoebox: <c>server.address</c> on its
+    /// own SERVER spans and on its callers' CLIENT spans.
     ///
     /// It comes from the node id, never the label, so relabelling a node renames the
     /// service and keeps its address, the way a Kubernetes Service keeps its DNS name
@@ -53,30 +53,62 @@ public sealed record Pod(
     /// name goes quiet, a new name starts on the same address, with the same callers
     /// and the same dependencies.
     /// </summary>
-    public string Host => HostOf(Id);
+    /// <param name="ns">The shoebox's namespace, from <see cref="NamespaceOf"/>.</param>
+    public string HostIn(string ns) => HostOf(Id, ns);
 
     /// <summary>
-    /// The route a service answers on: <c>/</c> and the first label of its host.
+    /// The route a service answers on: <c>/</c> and its host label.
     ///
     /// From the node id like the address, so a relabel leaves the API where it was:
-    /// renaming a service does not move its endpoints. The first label is taken as
-    /// it is, hash suffix included for an id that needed one, so two nodes whose
-    /// ids reduce to the same letters still have different routes, as they have
-    /// different hosts.
+    /// renaming a service does not move its endpoints, which a route built from the
+    /// label would. The label is taken as it is, hash suffix included for an id that
+    /// needed one, so two nodes whose ids reduce to the same letters still have
+    /// different routes, as they have different hosts. The namespace is not part of
+    /// it: a path is the same in every namespace, as it is in a cluster.
     /// </summary>
-    public string Route => $"/{Host[..Host.IndexOf('.')]}";
+    public string Route => $"/{HostLabelOf(Id)}";
+
+    /// <summary>The namespace of a run with no shoebox, as in a cluster with none chosen.</summary>
+    public const string DefaultNamespace = "default";
 
     /// <summary>
-    /// A Kubernetes Service DNS name for a node id: <c>{id}.default.svc.cluster.local</c>.
+    /// A shoebox's namespace: <c>sb-</c> and a hash of its id, or
+    /// <see cref="DefaultNamespace"/> with none.
+    ///
+    /// Node ids like <c>api</c> and <c>web</c> are what everybody draws, so without a
+    /// namespace two shoeboxes sending to one backend answer on the same addresses,
+    /// and one visitor relabelling their <c>api</c> looks like a rename of somebody
+    /// else's. A namespace per shoebox is how a cluster keeps two teams' services
+    /// apart, and the shoebox id is already what keeps a visitor's runs apart. It is
+    /// hashed, not used as written: the id is any string a client sends, a namespace
+    /// is a DNS label, and the hash also keeps the id itself out of the address.
+    /// </summary>
+    public static string NamespaceOf(string? shoeboxId) =>
+        string.IsNullOrWhiteSpace(shoeboxId)
+            ? DefaultNamespace
+            : $"sb-{SafeEncode($"ns|{shoeboxId}", NamespaceHashLength)}";
+
+    private const int NamespaceHashLength = 10;
+
+    /// <summary>
+    /// A Kubernetes Service DNS name for a node id: <c>{label}.{ns}.svc.cluster.local</c>.
+    /// </summary>
+    public static string HostOf(string nodeId, string ns = DefaultNamespace) =>
+        $"{HostLabelOf(nodeId)}.{ns}.svc.cluster.local";
+
+    /// <summary>
+    /// The first label of a node's host.
     ///
     /// A DNS label is at most 63 lowercase letters, digits and single hyphens. An id
     /// that is one already is used as it is. Any other id is reduced to one, cut to
-    /// leave room, and given a short suffix hashed from the id as written, because
-    /// Mermaid ids are case sensitive and <c>Api</c> and <c>api</c> are two nodes;
-    /// folding them onto one host would make two services one address, which is
-    /// exactly the false rename this exists to avoid.
+    /// leave room, and given a suffix hashed from the id as written, because Mermaid
+    /// ids are case sensitive and <c>Api</c> and <c>api</c> are two nodes; folding
+    /// them onto one host would make two services one address, which is exactly the
+    /// false rename this exists to avoid. Eight characters from 27 is about 282
+    /// billion suffixes, so two hashed ids of one diagram sharing one is not a
+    /// practical concern.
     /// </summary>
-    public static string HostOf(string nodeId)
+    public static string HostLabelOf(string nodeId)
     {
         var label = Reduce(nodeId);
         if (label.Length == 0 || !string.Equals(label, nodeId, StringComparison.Ordinal) || label.Length > MaxDnsLabel)
@@ -87,10 +119,10 @@ public sealed record Pod(
             label = $"{label}-{SafeEncode($"host|{nodeId}", HostSuffixLength)}";
         }
 
-        return $"{label}.default.svc.cluster.local";
+        return label;
     }
 
-    private const int HostSuffixLength = 5;
+    private const int HostSuffixLength = 8;
 
     private const int MaxDnsLabel = 63;
 

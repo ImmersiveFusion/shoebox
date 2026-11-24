@@ -74,11 +74,71 @@ flowchart LR
             return match.Groups["service"].Value;
         }
 
+        // Every run here is fired in shoebox "test", so its services answer in that
+        // shoebox's namespace.
+        private static string Host(string id) => Pod.HostOf(id, Pod.NamespaceOf("test"));
+
+        [Test]
+        public void Two_Shoeboxes_With_The_Same_Diagram_Answer_On_Different_Addresses()
+        {
+            // Everybody draws a node called api. Without a namespace per shoebox, two
+            // visitors sending to one backend would share its address, and one of them
+            // relabelling theirs would read as a rename of the other's.
+            using var pool = new PodTracerPool(target: null);
+            var runner = new TopologyRunner(pool);
+            string? AddressIn(string? shoebox)
+            {
+                var captured = new List<Activity>();
+                using var listener = new ActivityListener
+                {
+                    ShouldListenTo = _ => true,
+                    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                    ActivityStopped = captured.Add,
+                };
+                ActivitySource.AddActivityListener(listener);
+                var result = runner.Run(MermaidParser.Parse(Before), 1, shoebox);
+                return captured.Single(s => s.TraceId.ToString() == result.TraceId && s.Kind == ActivityKind.Server
+                                            && ServiceOf(s) == "orders-api").GetTagItem("server.address") as string;
+            }
+
+            var mine = AddressIn("visitor-one");
+            var theirs = AddressIn("visitor-two");
+
+            mine.Should().NotBe(theirs);
+            mine.Should().Be(Pod.HostOf("api", Pod.NamespaceOf("visitor-one")));
+            AddressIn("visitor-one").Should().Be(mine, "the same shoebox answers on the same address every run");
+            AddressIn(null).Should().Be("api.default.svc.cluster.local", "a run with no shoebox uses the default namespace");
+        }
+
+        [TestCase("visitor-one")]
+        [TestCase("8f14e45fceea167a5a36dedd4bea2543")]
+        [TestCase("Ünïcødé / with spaces\r\nand.dots")]
+        [TestCase("a very long shoebox id that goes on and on well past anything a DNS label could ever hold in one piece")]
+        public void A_Namespace_Is_A_Dns_Label_That_Does_Not_Carry_The_Shoebox_Id(string shoebox)
+        {
+            var ns = Pod.NamespaceOf(shoebox);
+
+            ns.Should().MatchRegex("^sb-[a-z0-9]{10}$");
+            ns.Should().NotContain(shoebox.ToLowerInvariant(), "the id is hashed, never written into an address");
+            Pod.NamespaceOf(shoebox).Should().Be(ns, "deterministic");
+        }
+
+        [Test]
+        public void A_Long_Failure_Reason_Is_Cut_Before_It_Is_Copied_Onto_Spans()
+        {
+            var reason = new string('x', 5000);
+            var spans = Capture($"flowchart LR\n  web[Storefront] --> api[Orders API]\n  api -->|broken: {reason}| db[(SQL Server)]");
+
+            spans.Where(s => s.Status == ActivityStatusCode.Error)
+                .Should().NotBeEmpty()
+                .And.OnlyContain(s => s.StatusDescription!.Length <= MermaidParser.MaxFailureReasonLength);
+        }
+
         [Test]
         public void A_Call_Is_A_Client_Span_Under_The_Caller_And_A_Server_Span_Under_The_Callee()
         {
             var spans = Capture(Before);
-            var host = Pod.HostOf("api");
+            var host = Host("api");
 
             var client = spans.Single(s => s.Kind == ActivityKind.Client && Equals(s.GetTagItem("server.address"), host));
             ServiceOf(client).Should().Be("storefront");
@@ -98,7 +158,7 @@ flowchart LR
             var entry = Capture(Before).Single(s => s.ParentSpanId == default);
 
             entry.Kind.Should().Be(ActivityKind.Server);
-            entry.GetTagItem("server.address").Should().Be(Pod.HostOf("web"));
+            entry.GetTagItem("server.address").Should().Be(Host("web"));
         }
 
         [Test]
@@ -144,12 +204,12 @@ flowchart LR
 
             foreach (var (run, spans) in runs)
             {
-                var server = spans.Single(s => s.Kind == ActivityKind.Server && s.GetTagItem("server.address") as string == Pod.HostOf("api"));
+                var server = spans.Single(s => s.Kind == ActivityKind.Server && s.GetTagItem("server.address") as string == Host("api"));
                 ServiceOf(server).Should().Be(run <= 10 ? "orders-api" : "orders-service", $"run {run}");
                 ServiceOf(spans.Single(s => s.SpanId == server.ParentSpanId)).Should().Be("storefront", $"run {run}");
                 spans.Where(s => s.ParentSpanId == server.SpanId)
                     .Select(s => (string?)(s.GetTagItem("server.address") ?? s.GetTagItem("messaging.destination.name")))
-                    .Should().BeEquivalentTo(new[] { "orders-postgres", Pod.HostOf("stock"), "orders-created" }, $"run {run}");
+                    .Should().BeEquivalentTo(new[] { "orders-postgres", Host("stock"), "orders-created" }, $"run {run}");
             }
 
             runs.SelectMany(r => r.Spans).Select(ServiceOf).Distinct()
@@ -177,7 +237,7 @@ flowchart LR
             var after = Peers(Capture(After), "orders-service");
 
             after.Should().Be(before);
-            before.Deps.Should().Contain(Pod.HostOf("stock")).And.Contain("orders-postgres").And.Contain("orders-created");
+            before.Deps.Should().Contain(Host("stock")).And.Contain("orders-postgres").And.Contain("orders-created");
         }
 
         [Test]
@@ -259,9 +319,17 @@ flowchart LR
   web[Storefront] --> api[Orders API]
   api -->|broken: wrong column| db[(SQL Server)]");
 
-            var call = spans.Single(s => Equals(s.GetTagItem("server.address"), Pod.HostOf("api")) && s.Kind == ActivityKind.Client);
+            var call = spans.Single(s => Equals(s.GetTagItem("server.address"), Host("api")) && s.Kind == ActivityKind.Client);
             call.Status.Should().Be(ActivityStatusCode.Error);
             call.GetTagItem("http.response.status_code").Should().Be(500);
+            call.GetTagItem("error.type").Should().Be("500", "the HTTP conventions name the status code as the error type");
+
+            // Both halves of the call agree on the outcome and the cause.
+            var answer = spans.Single(s => s.ParentSpanId == call.SpanId);
+            answer.Kind.Should().Be(ActivityKind.Server);
+            answer.Status.Should().Be(ActivityStatusCode.Error);
+            answer.GetTagItem("http.response.status_code").Should().Be(500);
+            answer.StatusDescription.Should().Be(call.StatusDescription);
         }
 
         [TestCase("api", "api.default.svc.cluster.local")]
@@ -274,7 +342,7 @@ flowchart LR
         {
             // Mermaid ids are case sensitive, so these are four nodes. One host for
             // two of them would make two services one address.
-            var hosts = new[] { "api", "Api", "API", "a_pi" }.Select(Pod.HostOf).ToList();
+            var hosts = new[] { "api", "Api", "API", "a_pi" }.Select(id => Pod.HostOf(id)).ToList();
 
             hosts.Should().OnlyHaveUniqueItems();
             hosts.Should().OnlyContain(h => System.Text.RegularExpressions.Regex.IsMatch(
@@ -282,8 +350,8 @@ flowchart LR
             // Pinned from a run of HostOf as written: the suffix is SHA-256 of "host|Api"
             // in the Kubernetes name alphabet. If this changes, every shared link's hosts
             // moved, and a backend would see each service on a new address.
-            Pod.HostOf("Api").Should().Be("api-qrx24.default.svc.cluster.local", "deterministic, so a shared link names the same host everywhere");
-            Pod.HostOf("").Should().MatchRegex(@"^svc-[a-z0-9]{5}\.default\.svc\.cluster\.local$", "an empty id still gets a valid host");
+            Pod.HostOf("Api").Should().Be("api-qrx24f7l.default.svc.cluster.local", "deterministic, so a shared link names the same host everywhere");
+            Pod.HostOf("").Should().MatchRegex(@"^svc-[a-z0-9]{8}\.default\.svc\.cluster\.local$", "an empty id still gets a valid host");
         }
 
         [Test]
@@ -371,7 +439,7 @@ flowchart LR
 
             spans.Where(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "worker")
                 .Select(s => s.GetTagItem("server.address"))
-                .Should().BeEquivalentTo(new object[] { Pod.HostOf("w1"), Pod.HostOf("w2") });
+                .Should().BeEquivalentTo(new object[] { Host("w1"), Host("w2") });
         }
 
         [Test]
@@ -395,22 +463,24 @@ flowchart LR
         }
 
         [Test]
-        public void With_One_Span_Left_A_Service_Call_Is_Skipped_And_A_Database_Call_Still_Runs()
+        public void With_One_Span_Left_The_Walk_Stops_Rather_Than_Visiting_The_Rest()
         {
             // Entry SERVER (1) plus 249 calls of two spans each is 499. The 250th
-            // service call does not fit and is skipped; the database call after it
-            // is one span, fits, and runs, ending the run exactly at the budget.
+            // service call does not fit, and the walk stops there: nothing after it
+            // runs, not even the one-span database call. Skipping only that call
+            // would leave the count at 499, where the budget never trips, and the
+            // walk would go on visiting every remaining edge of the diagram.
             var lines = new List<string> { "flowchart LR" };
             for (var i = 1; i <= 250; i++) lines.Add($"  entry[Entry] --> s{i}[S{i}]");
             lines.Add("  entry --> db[(Postgres)]");
+            for (var i = 251; i <= 2000; i++) lines.Add($"  entry --> s{i}[S{i}]");
 
             using var pool = new PodTracerPool(target: null);
             var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
 
-            result.SpanCount.Should().Be(RunLimits.MaxSpans);
-            result.Hops.Should().Contain(h => h.To == "db", "a one-span step still fits");
-            result.Hops.Should().NotContain(h => h.To == "s250", "a call that does not fit is not a hop");
-            result.Hops.Count(h => h.To.StartsWith('s')).Should().Be(249);
+            result.SpanCount.Should().Be(RunLimits.MaxSpans - 1);
+            result.Hops.Should().HaveCount(249, "only the calls made in full");
+            result.Hops.Should().NotContain(h => h.To == "db", "the walk stopped before it");
             result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"));
         }
 
@@ -448,11 +518,11 @@ flowchart LR
             var (result, spans) = Fire("flowchart LR\n  orders[Orders API] -->|phantom| pay[Payment Service]", pool);
 
             var call = spans.Single(s => s.Kind == ActivityKind.Client);
-            call.GetTagItem("server.address").Should().Be(Pod.HostOf("pay"));
+            call.GetTagItem("server.address").Should().Be(Host("pay"));
             var answer = spans.Single(s => s.ParentSpanId == call.SpanId);
             answer.Kind.Should().Be(ActivityKind.Server);
             ServiceOf(answer).Should().Be("payment-service");
-            answer.GetTagItem("server.address").Should().Be(Pod.HostOf("pay"));
+            answer.GetTagItem("server.address").Should().Be(Host("pay"));
             result.Hops.Should().ContainSingle(h => h.From == "orders" && h.To == "pay");
         }
 
@@ -524,10 +594,10 @@ flowchart LR
         {
             var spans = Capture("flowchart LR\n  web[Storefront] --> order_api[Orders API]");
             var server = spans.Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "orders-api");
-            var host = Pod.HostOf("order_api");
+            var host = Host("order_api");
             var route = $"/{host.Split('.')[0]}";
 
-            route.Should().MatchRegex("^/order-api-[a-z0-9]{5}$", "a suffixed id keeps its suffix in the route");
+            route.Should().MatchRegex("^/order-api-[a-z0-9]{8}$", "a suffixed id keeps its suffix in the route");
             server.GetTagItem("http.route").Should().Be(route);
             spans.Single(s => s.SpanId == server.ParentSpanId).GetTagItem("url.full")
                 .Should().Be($"http://{host}:{Pod.ServicePort}{route}", "the caller dials the route the callee answers on");
