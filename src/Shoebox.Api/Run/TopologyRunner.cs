@@ -453,6 +453,17 @@ public sealed class TopologyRunner
     /// <returns>The callee's failure, so the caller fails with it. Null when it did not fail.</returns>
     private string? CallService(Graph graph, Pod caller, int callerInstance, Pod callee, Activity? parent, RunState state, int depth)
     {
+        // A call is two spans, and both fit or neither is emitted. With one slot
+        // left, the CLIENT half alone would be a call dialling a host nothing
+        // answers on, which is exactly what reads as a peer nobody has seen. The
+        // run stops here instead, and Visit writes the usual note about why.
+        if (RunLimits.MaxSpans - state.SpanCount < 2)
+        {
+            state.Stop();
+            _ = Visit(graph, callee, parent, state, depth + 1);
+            return null;
+        }
+
         var source = _pool.For(caller.ServiceName, callerInstance, caller.Revision);
         using var client = source.StartActivity(
             "GET",
@@ -873,7 +884,12 @@ public sealed class TopologyRunner
         /// Whether this run has spent its span budget. See <see cref="RunLimits"/>
         /// for why the budget rather than the depth limit is the real bound.
         /// </summary>
-        public bool Exhausted => SpanCount >= RunLimits.MaxSpans;
+        public bool Exhausted => _stopped || SpanCount >= RunLimits.MaxSpans;
+
+        private bool _stopped;
+
+        /// <summary>Ends the walk early, when what is left of the budget cannot hold the next whole step.</summary>
+        public void Stop() => _stopped = true;
 
         /// <summary>
         /// The pods on the current root-to-leaf path. Added on the way down and

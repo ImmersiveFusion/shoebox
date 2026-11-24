@@ -171,11 +171,15 @@ carries its host too. The host comes from the node id, never the label, the way 
 Kubernetes Service keeps its DNS name: node `api` answers on
 `api.default.svc.cluster.local`, route `/api`. An id that is not already a DNS label
 (`Api`, `order_api`) is lowercased and given a short suffix hashed from the id as
-written, so two ids never share a host.
+written, so two ids never share a host; the route is the host's first label, suffix
+included (`/order-api-k7xqz`). A label longer than 63 characters is cut to fit.
 
 So keep the id and change the label, and the service is renamed: the old
-`service.name` goes quiet, a new one starts on the same address, with the same callers
-and the same dependencies, and nothing else in the trace changes.
+`service.name` goes quiet, and a new one starts on the same address, with the same
+callers and the same dependencies. What changes is exactly what is built from
+`service.name`: the pod names (`service.instance.id`, since a pod is named after its
+service) and the SERVER span's name (`orders-service handle`). Addresses, routes,
+ports, span kinds, parents, statuses and every other attribute stay as they were.
 
 ```mermaid
 flowchart LR
@@ -189,8 +193,12 @@ flowchart LR
   web[Storefront] --> api[Orders Service x2]
 ```
 
-A backend that recognises a renamed service by its callers can only do that for a
-service something calls, so rename a called service, not the entry point. Datastores,
+An address alone does not make two names one service: a shared ingress or a reused
+host would merge things that are different. So a rename is usually recognised by
+several things together, among them that the same callers moved from the old name to
+the new one. The entry point has no callers to compare, so to stage a rename, rename a
+service something calls; put a caller in front of the one you want to rename if
+needed. Datastores,
 caches, third parties and queues are named by their labels as before, and a call that
 fails outright (`broken`) is emitted as before, with no address.
 

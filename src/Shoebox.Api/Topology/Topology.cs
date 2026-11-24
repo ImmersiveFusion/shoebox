@@ -104,8 +104,6 @@ public sealed record Pod(
     /// one. Derived rather than typed, so every diagram has a version without
     /// learning another marker, and the same diagram always reports the same one.
     /// </summary>
-    public string ServiceVersion => VersionOf(Revision);
-
     public static string VersionOf(int? revision) => $"1.{revision ?? 0}.0";
 
     /// <summary>Every pod name this node can serve from, in position order.</summary>

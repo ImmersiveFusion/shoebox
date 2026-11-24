@@ -236,14 +236,129 @@ flowchart LR
         }
 
         [Test]
+        public void Every_Pod_That_Emitted_Reports_Its_Own_Version()
+        {
+            // Every service in the diagram, every replica that served, each at its
+            // own marker: one service's rev never leaks into another's version.
+            using var pool = new PodTracerPool(target: null);
+            const string diagram = @"
+flowchart LR
+  web[Storefront] --> api[Orders API x2 rev3]
+  api --> stock[Stock API rev1]
+  api --> q[[orders.created]]
+  q --> ship[Shipping Worker]";
+            var expected = new Dictionary<string, (int? Rev, int Replicas)>
+            {
+                ["storefront"] = (null, 1),
+                ["orders-api"] = (3, 2),
+                ["stock-api"] = (1, 1),
+                ["shipping-worker"] = (null, 1),
+            };
+
+            CaptureWith(diagram, pool, run: 1);
+            CaptureWith(diagram, pool, run: 2);
+
+            foreach (var (service, (rev, replicas)) in expected)
+            {
+                for (var n = 1; n <= replicas; n++)
+                {
+                    var resource = pool.ResourceOf(service, n, rev);
+                    resource.Should().NotBeNull($"{service} #{n} served a run");
+                    resource!.Attributes.Should().Contain(new KeyValuePair<string, object>("service.version", Pod.VersionOf(rev)),
+                        $"{service} is at rev {rev?.ToString() ?? "none"}");
+                }
+            }
+        }
+
+        [Test]
         public void A_Rev_Bump_Is_A_New_Version_On_The_Same_Address()
         {
-            var before = Capture("flowchart LR\n  web[Storefront] --> api[Orders API x2]");
-            var after = Capture("flowchart LR\n  web[Storefront] --> api[Orders API x2 rev1]");
+            using var beforePool = new PodTracerPool(target: null);
+            using var afterPool = new PodTracerPool(target: null);
+            var before = CaptureWith("flowchart LR\n  web[Storefront] --> api[Orders API x2]", beforePool);
+            var after = CaptureWith("flowchart LR\n  web[Storefront] --> api[Orders API x2 rev1]", afterPool);
 
-            Pod.VersionOf(1).Should().NotBe(Pod.VersionOf(null));
+            beforePool.ResourceOf("orders-api", 1)!.Attributes
+                .Should().Contain(new KeyValuePair<string, object>("service.version", "1.0.0"));
+            afterPool.ResourceOf("orders-api", 1, revision: 1)!.Attributes
+                .Should().Contain(new KeyValuePair<string, object>("service.version", "1.1.0"));
+
             after.Single(s => ServiceOf(s) == "orders-api").GetTagItem("server.address")
                 .Should().Be(before.Single(s => ServiceOf(s) == "orders-api").GetTagItem("server.address"));
+        }
+
+        [Test]
+        public void A_Pinned_Pod_Answers_On_Its_Nodes_Host()
+        {
+            // "#2" names a pod, not an address: a pinned pod answers on its node's host
+            // like any other, and two pinned nodes of one service are two hosts.
+            var spans = Capture(@"
+flowchart LR
+  web[Storefront] --> w1[Worker #1]
+  web --> w2[Worker #2]");
+
+            spans.Where(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "worker")
+                .Select(s => s.GetTagItem("server.address"))
+                .Should().BeEquivalentTo(new object[] { Pod.HostOf("w1"), Pod.HostOf("w2") });
+        }
+
+        [TestCase(63)]
+        [TestCase(64)]
+        public void An_Id_At_The_Dns_Limit_Still_Makes_A_Valid_Label(int length)
+        {
+            var id = new string('a', length);
+            var label = Pod.HostOf(id).Split('.')[0];
+
+            label.Length.Should().BeLessThanOrEqualTo(63);
+            System.Text.RegularExpressions.Regex.IsMatch(label, "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").Should().BeTrue();
+            Pod.HostOf(id).Should().NotBe(Pod.HostOf(new string('a', length - 1)), "a cut id must not collide with a shorter one");
+        }
+
+        [Test]
+        public void A_Run_Cut_By_The_Span_Budget_Leaves_No_Unanswered_Call()
+        {
+            // A call is two spans. When a run reaches the cap, the last call must
+            // not be a CLIENT span with no SERVER answering it: that is a dialled
+            // host nothing answers on, which reads as a peer nobody has seen. Each
+            // mesh size lands the budget on a different span, so between them the
+            // cap falls both on a call's first half and between calls.
+            for (var size = 6; size <= 8; size++)
+            {
+                var ids = Enumerable.Range(1, size).Select(i => $"s{i}").ToList();
+                var lines = new List<string> { "flowchart LR", "  entry[Entry] --> s1[S1]" };
+                foreach (var a in ids)
+                foreach (var b in ids.Where(b => b != a))
+                    lines.Add($"  {a}[{a.ToUpperInvariant()}] --> {b}[{b.ToUpperInvariant()}]");
+
+                var captured = new List<Activity>();
+                using var listener = new ActivityListener
+                {
+                    ShouldListenTo = _ => true,
+                    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                    ActivityStopped = captured.Add,
+                };
+                ActivitySource.AddActivityListener(listener);
+                using var pool = new PodTracerPool(target: null);
+                var result = new TopologyRunner(pool).Run(MermaidParser.Parse(string.Join("\n", lines)), 1, "test");
+                var spans = captured.Where(a => a.TraceId.ToString() == result.TraceId).ToList();
+
+                result.Notes.Should().Contain(n => n.Contains($"{RunLimits.MaxSpans} spans"), $"a {size}-node mesh must reach the cap");
+                result.SpanCount.Should().BeLessThanOrEqualTo(RunLimits.MaxSpans);
+                foreach (var call in spans.Where(s => s.Kind == ActivityKind.Client && s.GetTagItem("url.full") is not null))
+                {
+                    spans.Should().Contain(s => s.ParentSpanId == call.SpanId && s.Kind == ActivityKind.Server,
+                        $"every call is answered, even in a {size}-node run cut at the cap");
+                }
+            }
+        }
+
+        [Test]
+        public void The_Route_Is_The_Hosts_First_Label()
+        {
+            var server = Capture("flowchart LR\n  web[Storefront] --> order_api[Orders API]")
+                .Single(s => s.Kind == ActivityKind.Server && ServiceOf(s) == "orders-api");
+
+            server.GetTagItem("http.route").Should().Be($"/{Pod.HostOf("order_api").Split('.')[0]}");
         }
     }
 }
